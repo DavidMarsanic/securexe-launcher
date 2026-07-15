@@ -1,0 +1,88 @@
+name: Release
+
+# Builds installers for macOS (arm64 + x64), Windows, and Linux, and attaches
+# them to a draft GitHub Release — draft on purpose, so a new build never
+# goes live at the stable download links (see below) without a manual
+# "Publish" click. Trigger by pushing a tag like `v0.1.0`, or run manually.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            fixed_name: securexe-launcher-macos-arm64.dmg
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            fixed_name: securexe-launcher-macos-x64.dmg
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            fixed_name: securexe-launcher-linux-amd64.AppImage
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            fixed_name: securexe-launcher-windows-x64-setup.exe
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build and create/update draft release
+        id: tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Securexe Launcher ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      # tauri-action uploads assets named after productName+version+arch,
+      # which changes every release. We additionally upload a copy under a
+      # fixed name so the website can link to a URL that never changes:
+      # https://github.com/<owner>/<repo>/releases/latest/download/<fixed_name>
+      - name: Also upload under a fixed, version-agnostic filename
+        shell: bash
+        run: |
+          set -euo pipefail
+          paths='${{ steps.tauri.outputs.artifactPaths }}'
+          echo "Built artifacts: $paths"
+
+          match=$(echo "$paths" | python3 -c "
+          import json, sys
+          paths = json.load(sys.stdin)
+          ext = '${{ matrix.fixed_name }}'.rsplit('.', 1)[-1]
+          for p in paths:
+              if p.endswith('.' + ext):
+                  print(p)
+                  break
+          ")
+
+          if [ -z "$match" ]; then
+            echo "No artifact matching .*.${{ matrix.fixed_name }} extension found, skipping fixed-name upload"
+            exit 0
+          fi
+
+          cp "$match" "${{ matrix.fixed_name }}"
+          gh release upload "${{ github.ref_name }}" "${{ matrix.fixed_name }}" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
