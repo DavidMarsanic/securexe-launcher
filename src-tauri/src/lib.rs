@@ -5,6 +5,7 @@ mod orchestrator;
 mod platform;
 mod repo;
 mod run;
+mod signature;
 mod verify;
 
 use tauri_plugin_deep_link::DeepLinkExt;

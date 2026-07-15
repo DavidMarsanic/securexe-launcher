@@ -3,6 +3,7 @@ use std::fmt;
 #[derive(Debug)]
 pub enum LauncherError {
     InvalidUrl(String),
+    Unauthorized(String),
     NotFound(String),
     Network(String),
     ChecksumMismatch,
@@ -13,6 +14,7 @@ impl fmt::Display for LauncherError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LauncherError::InvalidUrl(msg) => write!(f, "Invalid link: {msg}"),
+            LauncherError::Unauthorized(msg) => write!(f, "Unauthorized link: {msg}"),
             LauncherError::NotFound(msg) => write!(f, "Not found: {msg}"),
             LauncherError::Network(msg) => write!(f, "Network error: {msg}"),
             LauncherError::ChecksumMismatch => {

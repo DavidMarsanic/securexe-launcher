@@ -1,12 +1,20 @@
 use crate::error::LauncherError;
+use crate::signature;
 
-/// A parsed, validated `securexe://run?repo=owner/repo&commit=<sha>` request.
+/// A parsed, validated `securexe://run?repo=owner/repo&commit=<sha>&exp=<unix_ts>&sig=<hex>` request.
 ///
 /// `owner`/`repo`/`commit` are validated against a strict charset before this
 /// struct can be constructed, because they get interpolated into a local
 /// filesystem path (`~/.securexe/apps/<slug>/<commit>/...`). A malicious page
 /// could otherwise pass something like `repo=..%2F..%2F..%2Fetc&commit=passwd`
 /// through the scheme and walk the cache path outside `~/.securexe`.
+///
+/// `exp`/`sig` are also required and checked against the website's signing
+/// key (see signature.rs) — without a valid signature, *any* webpage could
+/// construct a `securexe://run` link for any repo, since the OS gives the
+/// launcher no way to know which site a custom-scheme link was clicked
+/// from. The signature is what limits working links to ones minted by
+/// brightencode.com's own backend.
 pub struct RunRequest {
     pub owner: String,
     pub repo: String,
@@ -60,10 +68,14 @@ pub fn parse_run_url(raw: &str) -> Result<RunRequest, LauncherError> {
 
     let mut repo_param: Option<String> = None;
     let mut commit_param: Option<String> = None;
+    let mut exp_param: Option<String> = None;
+    let mut sig_param: Option<String> = None;
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
             "repo" => repo_param = Some(value.into_owned()),
             "commit" => commit_param = Some(value.into_owned()),
+            "exp" => exp_param = Some(value.into_owned()),
+            "sig" => sig_param = Some(value.into_owned()),
             _ => {}
         }
     }
@@ -88,6 +100,12 @@ pub fn parse_run_url(raw: &str) -> Result<RunRequest, LauncherError> {
         }
         _ => None,
     };
+
+    let exp = exp_param.ok_or_else(|| LauncherError::Unauthorized("missing exp".into()))?;
+    let sig = sig_param.ok_or_else(|| LauncherError::Unauthorized("missing sig".into()))?;
+
+    let repo_path = format!("{owner}/{repo}");
+    signature::verify(&repo_path, commit.as_deref(), &exp, &sig)?;
 
     Ok(RunRequest { owner, repo, commit })
 }
