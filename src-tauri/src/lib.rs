@@ -1,3 +1,4 @@
+mod bundle;
 mod error;
 mod flow;
 mod install;
@@ -8,11 +9,30 @@ mod run;
 mod signature;
 mod verify;
 
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
 use tauri_plugin_deep_link::DeepLinkExt;
 
+/// Cold starts can deliver the same launch URL through both
+/// `get_current()` and the `on_open_url` listener below — a known overlap
+/// in how the OS/plugin replay the Apple Event that launched the app.
+/// Without this guard, that double delivery races two downloads against
+/// the same cache file and corrupts it. A signed link is single-use in
+/// practice (the website mints a fresh `exp`/`sig` per click), so an exact
+/// string match is enough to tell "redelivered" apart from "clicked again".
+fn already_dispatched(url: &str) -> bool {
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    !seen.lock().unwrap().insert(url.to_string())
+}
+
 fn dispatch(app: &tauri::AppHandle, url: url::Url) {
-    let app = app.clone();
     let url = url.to_string();
+    if already_dispatched(&url) {
+        return;
+    }
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         flow::handle_run_url(app, url).await;
     });

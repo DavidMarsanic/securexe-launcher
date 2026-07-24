@@ -32,6 +32,8 @@ dirs = "5"
 url = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
+zip = "2"
+plist = "1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

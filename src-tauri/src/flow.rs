@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::error::LauncherError;
-use crate::{install, orchestrator, platform, repo, run, verify};
+use crate::{bundle, install, orchestrator, platform, repo, run, verify};
 
 pub const STATUS_EVENT: &str = "launcher-status";
 
@@ -88,7 +88,13 @@ async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> 
     }
 
     emit(app, StatusEvent::Launching { repo: repo_path.clone() });
-    run::launch(&dest)?;
+    let launch_path = {
+        let dest = dest.clone();
+        tokio::task::spawn_blocking(move || bundle::resolve_launchable(&dest))
+            .await
+            .map_err(|e| LauncherError::Io(e.to_string()))??
+    };
+    run::launch(&launch_path)?;
 
     emit(app, StatusEvent::Done { repo: repo_path });
     Ok(())
