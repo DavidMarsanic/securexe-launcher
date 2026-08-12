@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::error::LauncherError;
-use crate::{bundle, install, orchestrator, platform, repo, run, verify};
+use crate::{bundle, install, library, orchestrator, platform, repo, run, verify};
 
 pub const STATUS_EVENT: &str = "launcher-status";
 
@@ -88,13 +88,26 @@ async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> 
     }
 
     emit(app, StatusEvent::Launching { repo: repo_path.clone() });
-    let launch_path = {
+    let resolved = {
         let dest = dest.clone();
         tokio::task::spawn_blocking(move || bundle::resolve_launchable(&dest))
             .await
             .map_err(|e| LauncherError::Io(e.to_string()))??
     };
-    run::launch(&launch_path)?;
+
+    let is_gui = run::is_gui(&resolved.executable);
+    let icon = if let Some(app_bundle) = &resolved.app_bundle {
+        let dest_png = install::icon_path(&slug)?;
+        let app_bundle = app_bundle.clone();
+        tokio::task::spawn_blocking(move || bundle::extract_icon(&app_bundle, &dest_png))
+            .await
+            .unwrap_or(None)
+    } else {
+        None
+    };
+    library::record_install(&slug, &repo_path, &commit, resolved.executable.clone(), is_gui, icon)?;
+
+    run::launch(&resolved.executable)?;
 
     emit(app, StatusEvent::Done { repo: repo_path });
     Ok(())

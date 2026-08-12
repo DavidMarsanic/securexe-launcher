@@ -1,11 +1,16 @@
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 14px;
+  line-height: 1.4;
   font-weight: 400;
 
   color: #0f0f0f;
   background-color: #f6f6f6;
+  --tile-bg: #ffffff;
+  --tile-border: rgba(0, 0, 0, 0.08);
+  --tile-hover: #eef0ff;
+  --banner-bg: #e8e8f5;
+  --muted: rgba(15, 15, 15, 0.55);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -14,29 +19,114 @@
   -webkit-text-size-adjust: 100%;
 }
 
-.container {
+* {
+  box-sizing: border-box;
+}
+
+body {
   margin: 0;
-  padding-top: 12vh;
+}
+
+.container {
+  min-height: 100vh;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: center;
+  gap: 16px;
+}
+
+.status-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--banner-bg);
+  font-size: 0.9em;
+}
+
+.status-banner.hidden {
+  display: none;
+}
+
+.status-repo {
+  font-weight: 600;
+}
+
+.status-text {
+  color: var(--muted);
+}
+
+.empty-state {
+  margin: auto;
+  color: var(--muted);
   text-align: center;
 }
 
-h1 {
-  font-size: 1.1em;
-  margin: 0 0 0.5em;
-  word-break: break-all;
+.empty-state.hidden {
+  display: none;
 }
 
-#status {
-  opacity: 0.7;
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 16px;
+  align-content: start;
+}
+
+.app-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.app-tile:hover,
+.app-tile:focus-visible {
+  background: var(--tile-hover);
+  border-color: var(--tile-border);
+  outline: none;
+}
+
+.app-tile:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.app-tile img {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: var(--tile-bg);
+  border: 1px solid var(--tile-border);
+  object-fit: contain;
+  padding: 6px;
+}
+
+.app-tile span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 0.85em;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
     background-color: #2f2f2f;
+    --tile-bg: #3a3a3a;
+    --tile-border: rgba(255, 255, 255, 0.12);
+    --tile-hover: #40405a;
+    --banner-bg: #3a3a4a;
+    --muted: rgba(246, 246, 246, 0.6);
   }
 }

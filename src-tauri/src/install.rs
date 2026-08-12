@@ -11,6 +11,15 @@ pub fn artifact_path(slug: &str, commit: &str, file: &str) -> Result<PathBuf, La
     Ok(home.join(".securexe").join("apps").join(slug).join(commit).join(file))
 }
 
+/// `~/.securexe/icons/<slug>.png` — where a bundle's converted icon is
+/// cached for the gallery, keyed by slug rather than commit since an icon
+/// is treated as belonging to the app, not a specific build of it.
+pub fn icon_path(slug: &str) -> Result<PathBuf, LauncherError> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| LauncherError::Io("could not resolve home directory".into()))?;
+    Ok(home.join(".securexe").join("icons").join(format!("{slug}.png")))
+}
+
 /// True if `path` already exists and its sha256 matches `expected_sha256`.
 /// A cache hit lets us skip the download entirely.
 pub fn is_cached(path: &std::path::Path, expected_sha256: &str) -> bool {

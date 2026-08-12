@@ -2,6 +2,7 @@ mod bundle;
 mod error;
 mod flow;
 mod install;
+mod library;
 mod orchestrator;
 mod platform;
 mod repo;
@@ -12,7 +13,61 @@ mod verify;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use serde::Serialize;
 use tauri_plugin_deep_link::DeepLinkExt;
+
+/// The gallery-safe view of a `library::LibraryEntry` — the webview never
+/// sees raw filesystem paths, only a slug to relaunch by and an icon
+/// already inlined as a data URL (no need to stand up an asset-serving
+/// scheme just for a handful of small PNGs).
+#[derive(Serialize)]
+struct GalleryEntry {
+    slug: String,
+    repo: String,
+    is_gui: bool,
+    icon_data_url: Option<String>,
+    installed_at: u64,
+    last_launched_at: Option<u64>,
+}
+
+impl From<library::LibraryEntry> for GalleryEntry {
+    fn from(e: library::LibraryEntry) -> Self {
+        let icon_data_url = e.icon.and_then(|path| std::fs::read(path).ok()).map(|bytes| {
+            format!("data:image/png;base64,{}", STANDARD.encode(bytes))
+        });
+        GalleryEntry {
+            slug: e.slug,
+            repo: e.repo,
+            is_gui: e.is_gui,
+            icon_data_url,
+            installed_at: e.installed_at,
+            last_launched_at: e.last_launched_at,
+        }
+    }
+}
+
+#[tauri::command]
+fn list_library() -> Result<Vec<GalleryEntry>, String> {
+    library::load()
+        .map(|entries| entries.into_iter().map(GalleryEntry::from).collect())
+        .map_err(|e| e.to_string())
+}
+
+/// Re-runs an already-downloaded, already-checksum-verified app straight
+/// from the local cache — deliberately does *not* require a fresh signed
+/// link. The signature's job is authorizing what gets downloaded onto the
+/// machine in the first place; once that's verified once, replaying it
+/// locally doesn't need the site back in the loop.
+#[tauri::command]
+fn relaunch(slug: String) -> Result<(), String> {
+    let entry = library::find(&slug)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{slug} is not installed"))?;
+    run::launch(&entry.path).map_err(|e| e.to_string())?;
+    let _ = library::touch_last_launched(&slug);
+    Ok(())
+}
 
 /// Cold starts can deliver the same launch URL through both
 /// `get_current()` and the `on_open_url` listener below — a known overlap
@@ -43,6 +98,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .invoke_handler(tauri::generate_handler![list_library, relaunch])
         .setup(|app| {
             let handle = app.handle().clone();
 

@@ -10,8 +10,16 @@
 
   <body>
     <main class="container">
-      <h1 id="repo-name">Securexe Launcher</h1>
-      <p id="status">Waiting for a securexe:// link&hellip;</p>
+      <div id="status-banner" class="status-banner hidden">
+        <span id="status-repo" class="status-repo"></span>
+        <span id="status-text" class="status-text"></span>
+      </div>
+
+      <p id="empty-state" class="empty-state">
+        No apps yet — click Download on a project on the site.
+      </p>
+
+      <div id="gallery" class="gallery"></div>
     </main>
   </body>
 </html>
