@@ -51,19 +51,20 @@ function renderGallery(entries) {
 
     tile.append(img, label);
     tile.addEventListener("click", async () => {
-      // A double-click fires two separate DOM click events, not one — this
-      // disables the tile the instant the first is handled (synchronously,
-      // before the await), so a second click while a launch is still in
-      // flight has nothing to fire on.
+      // A double-click fires two separate DOM click events, not one. A
+      // local relaunch resolves in single-digit milliseconds, well before
+      // a real double-click's second click event even arrives (~150-300ms
+      // later) — so disabling only for the invoke's own duration doesn't
+      // catch it. Hold the tile disabled for a fixed cooldown instead, so
+      // a single click and a double-click both collapse into exactly one
+      // launch regardless of how fast relaunch itself finishes.
       if (tile.disabled) return;
       tile.disabled = true;
-      try {
-        await invoke("relaunch", { slug: entry.slug });
-      } catch (e) {
+      const launch = invoke("relaunch", { slug: entry.slug }).catch((e) => {
         console.error("relaunch failed", e);
-      } finally {
-        tile.disabled = false;
-      }
+      });
+      await Promise.all([launch, new Promise((resolve) => setTimeout(resolve, 600))]);
+      tile.disabled = false;
     });
     galleryEl.appendChild(tile);
   }
