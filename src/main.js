@@ -54,11 +54,28 @@ function renderGallery(entries) {
     removeBtn.className = "app-tile-remove";
     removeBtn.textContent = "×";
     removeBtn.title = `Uninstall ${entry.repo}`;
+    let confirmTimer = null;
     removeBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm(`Uninstall ${entry.repo}? This deletes its downloaded files.`)) {
+
+      // Tauri's WKWebView doesn't reliably implement native dialogs like
+      // window.confirm() unless the host app wires that up itself, which
+      // this doesn't — so a native confirm() here can silently no-op
+      // instead of prompting. Click-twice avoids depending on that
+      // entirely: the first click arms it, the second (within 3s) commits.
+      if (!removeBtn.classList.contains("confirming")) {
+        removeBtn.classList.add("confirming");
+        removeBtn.textContent = "✓";
+        removeBtn.title = `Click again to uninstall ${entry.repo}`;
+        confirmTimer = setTimeout(() => {
+          removeBtn.classList.remove("confirming");
+          removeBtn.textContent = "×";
+          removeBtn.title = `Uninstall ${entry.repo}`;
+        }, 3000);
         return;
       }
+
+      clearTimeout(confirmTimer);
       try {
         await invoke("uninstall", { slug: entry.slug });
         refreshGallery();

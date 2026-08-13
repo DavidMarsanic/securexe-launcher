@@ -147,6 +147,11 @@ body {
   background: rgba(200, 40, 40, 0.9);
 }
 
+.app-tile-remove.confirming {
+  opacity: 1;
+  background: rgba(200, 40, 40, 0.95);
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
