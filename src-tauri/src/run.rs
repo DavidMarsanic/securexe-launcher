@@ -96,6 +96,18 @@ fn launch_in_terminal(path: &Path, cwd: &Path) -> Result<(), LauncherError> {
     make_executable(&wrapper)?;
 
     Command::new("open").args(["-a", "Terminal"]).arg(&wrapper).spawn()?;
+
+    // Terminal.app has opened and started executing the script within a
+    // couple seconds; Unix allows unlinking a file a process still has
+    // open (the inode stays alive via that open handle), so this can't
+    // disrupt the running command — it just stops these from silently
+    // accumulating in the temp folder forever.
+    let cleanup_path = wrapper.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let _ = std::fs::remove_file(&cleanup_path);
+    });
+
     Ok(())
 }
 

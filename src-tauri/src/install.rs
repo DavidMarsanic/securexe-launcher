@@ -41,6 +41,18 @@ pub fn sandbox_dir(slug: &str) -> Result<PathBuf, LauncherError> {
     Ok(dir)
 }
 
+/// Removes one specific commit's downloaded build for `slug` — called when
+/// an app updates to a new commit, since the library only ever tracks the
+/// current one and the previous commit's directory would otherwise sit on
+/// disk forever as orphaned dead weight.
+pub fn remove_commit(slug: &str, commit: &str) -> Result<(), LauncherError> {
+    let dir = app_dir(slug)?.join(commit);
+    if dir.is_dir() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    Ok(())
+}
+
 /// Removes everything on disk belonging to `slug` — downloaded builds,
 /// cached icon, sandbox contents. Best-effort per path: a missing
 /// directory isn't an error, since uninstall should succeed even if the

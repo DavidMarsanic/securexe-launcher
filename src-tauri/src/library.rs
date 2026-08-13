@@ -57,6 +57,11 @@ fn now() -> u64 {
 /// run — including cache hits — so `path`/`is_gui`/`icon` stay correct even
 /// if a repo's build shape changes between visits (e.g. fberadicator's
 /// darwin target switching from a bare binary to a `.app.zip`).
+///
+/// Returns the *previous* commit if this install moved `slug` to a
+/// different one — the library only ever tracks the current commit, so the
+/// caller can use this to clean up the now-orphaned old commit's directory
+/// (see `install::remove_commit`).
 pub fn record_install(
     slug: &str,
     repo: &str,
@@ -64,9 +69,13 @@ pub fn record_install(
     path: PathBuf,
     is_gui: bool,
     icon: Option<PathBuf>,
-) -> Result<(), LauncherError> {
+) -> Result<Option<String>, LauncherError> {
     let mut entries = load()?;
+    let mut previous_commit = None;
     if let Some(existing) = entries.iter_mut().find(|e| e.slug == slug) {
+        if existing.commit != commit {
+            previous_commit = Some(existing.commit.clone());
+        }
         existing.repo = repo.to_string();
         existing.commit = commit.to_string();
         existing.path = path;
@@ -84,7 +93,8 @@ pub fn record_install(
             last_launched_at: None,
         });
     }
-    save(&entries)
+    save(&entries)?;
+    Ok(previous_commit)
 }
 
 /// Looks up a previously-installed entry by slug — used by the gallery's

@@ -105,7 +105,11 @@ async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> 
     } else {
         None
     };
-    library::record_install(&slug, &repo_path, &commit, resolved.executable.clone(), is_gui, icon)?;
+    let previous_commit =
+        library::record_install(&slug, &repo_path, &commit, resolved.executable.clone(), is_gui, icon)?;
+    if let Some(old_commit) = previous_commit {
+        let _ = install::remove_commit(&slug, &old_commit);
+    }
 
     let cwd = install::sandbox_dir(&slug)?;
     run::launch(&resolved.executable, &cwd)?;
