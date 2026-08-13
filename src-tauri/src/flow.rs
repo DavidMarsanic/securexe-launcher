@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::error::LauncherError;
-use crate::{bundle, install, library, orchestrator, platform, repo, run, verify};
+use crate::{account, bundle, install, library, orchestrator, platform, repo, run, verify};
 
 pub const STATUS_EVENT: &str = "launcher-status";
 
@@ -14,6 +14,7 @@ pub enum StatusEvent {
     Verifying { repo: String },
     Launching { repo: String },
     Done { repo: String },
+    Linked { user: String },
     Error { message: String },
 }
 
@@ -105,15 +106,63 @@ async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> 
     } else {
         None
     };
+    let existing_entry = library::find(&slug)?;
     let previous_commit =
         library::record_install(&slug, &repo_path, &commit, resolved.executable.clone(), is_gui, icon)?;
     if let Some(old_commit) = previous_commit {
         let _ = install::remove_commit(&slug, &old_commit);
     }
 
+    // Only report "installed" on a genuinely new install or a version
+    // change — record_install runs on every launch (including cache hits),
+    // and reporting an event on every relaunch of an unchanged app would
+    // spam the worker for no reason the website's library view cares about.
+    let changed = existing_entry.map(|e| e.commit != commit).unwrap_or(true);
+    if changed {
+        if let Some(acct) = account::load().ok().flatten() {
+            let client = client.clone();
+            let repo_path = repo_path.clone();
+            let commit = commit.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = orchestrator::report_library_event(
+                    &client,
+                    &acct.device_token,
+                    &repo_path,
+                    Some(&commit),
+                    "installed",
+                )
+                .await;
+            });
+        }
+    }
+
     let cwd = install::sandbox_dir(&slug)?;
     run::launch(&resolved.executable, &cwd)?;
 
     emit(app, StatusEvent::Done { repo: repo_path });
+    Ok(())
+}
+
+/// Entry point for every incoming `securexe://link?...` URL — associates
+/// this device with a Securexe account. The website mints these
+/// (signDeviceLinkToken in lib/signing.ts) using the same keypair as
+/// `securexe://run` links, just a distinct message shape.
+pub async fn handle_link_url(app: AppHandle, raw_url: String) {
+    if let Err(e) = link_inner(&app, &raw_url).await {
+        emit(&app, StatusEvent::Error { message: e.to_string() });
+    }
+}
+
+async fn link_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> {
+    let req = repo::parse_link_url(raw_url)?;
+    let client = reqwest::Client::builder().build()?;
+    let device_id = account::device_id()?;
+
+    let device_token =
+        orchestrator::exchange_device_link(&client, &req.user, &req.exp, &req.sig, &device_id)
+            .await?;
+    account::record_link(req.user.clone(), device_token)?;
+
+    emit(app, StatusEvent::Linked { user: req.user });
     Ok(())
 }

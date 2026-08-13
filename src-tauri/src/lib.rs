@@ -1,3 +1,4 @@
+mod account;
 mod bundle;
 mod error;
 mod flow;
@@ -75,8 +76,53 @@ fn relaunch(slug: String) -> Result<(), String> {
 /// deliberately live in a hidden folder rather than somewhere Finder-visible.
 #[tauri::command]
 fn uninstall(slug: String) -> Result<(), String> {
+    // Looked up before removal purely to have repo/commit on hand for the
+    // best-effort event report below — uninstall itself doesn't need it.
+    let entry = library::find(&slug).map_err(|e| e.to_string())?;
+
     install::remove_all(&slug).map_err(|e| e.to_string())?;
-    library::remove(&slug).map_err(|e| e.to_string())
+    library::remove(&slug).map_err(|e| e.to_string())?;
+
+    if let (Some(entry), Some(acct)) = (entry, account::load().ok().flatten()) {
+        tauri::async_runtime::spawn(async move {
+            let client = reqwest::Client::new();
+            let _ = orchestrator::report_library_event(
+                &client,
+                &acct.device_token,
+                &entry.repo,
+                Some(&entry.commit),
+                "uninstalled",
+            )
+            .await;
+        });
+    }
+
+    Ok(())
+}
+
+/// Sanitized account view for the webview — never the raw device_token,
+/// same discipline as GalleryEntry never exposing raw filesystem paths.
+#[derive(Serialize)]
+struct AccountInfo {
+    github_username: String,
+    linked_at: u64,
+}
+
+#[tauri::command]
+fn get_account() -> Result<Option<AccountInfo>, String> {
+    account::load()
+        .map(|opt| {
+            opt.map(|a| AccountInfo {
+                github_username: a.github_username,
+                linked_at: a.linked_at,
+            })
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn unlink() -> Result<(), String> {
+    account::clear().map_err(|e| e.to_string())
 }
 
 /// Cold starts can deliver the same launch URL through both
@@ -93,13 +139,23 @@ fn already_dispatched(url: &str) -> bool {
 }
 
 fn dispatch(app: &tauri::AppHandle, url: url::Url) {
+    // Branch on the action (`run` vs `link`) before the dedup check below
+    // eats a plain string, since both share the same `securexe://<action>`
+    // shape and this is the one place that decides which flow handles a
+    // given incoming URL. Any other/missing action still falls through to
+    // handle_run_url, which already produces the right "unsupported
+    // action" error via repo::parse_run_url — unchanged from before.
+    let action = url.host_str().unwrap_or_default().to_string();
     let url = url.to_string();
     if already_dispatched(&url) {
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        flow::handle_run_url(app, url).await;
+        match action.as_str() {
+            "link" => flow::handle_link_url(app, url).await,
+            _ => flow::handle_run_url(app, url).await,
+        }
     });
 }
 
@@ -108,7 +164,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
-        .invoke_handler(tauri::generate_handler![list_library, relaunch, uninstall])
+        .invoke_handler(tauri::generate_handler![
+            list_library,
+            relaunch,
+            uninstall,
+            get_account,
+            unlink
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
 

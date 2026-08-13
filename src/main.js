@@ -6,6 +6,9 @@ const emptyStateEl = document.querySelector("#empty-state");
 const bannerEl = document.querySelector("#status-banner");
 const bannerRepoEl = document.querySelector("#status-repo");
 const bannerTextEl = document.querySelector("#status-text");
+const accountBarEl = document.querySelector("#account-bar");
+const accountLabelEl = document.querySelector("#account-label");
+const unlinkBtnEl = document.querySelector("#unlink-btn");
 
 const STEP_LABEL = {
   resolving: "Resolving…",
@@ -114,6 +117,35 @@ async function refreshGallery() {
   }
 }
 
+// Linking only ever happens by receiving a `securexe://link` deep link from
+// the website — there's nothing to click in here to initiate it, only to
+// undo it, so this bar is purely a status readout plus an unlink escape
+// hatch.
+function renderAccount(account) {
+  accountBarEl.classList.toggle("hidden", !account);
+  if (account) {
+    accountLabelEl.textContent = `Linked as ${account.github_username}`;
+  }
+}
+
+async function refreshAccount() {
+  try {
+    const account = await invoke("get_account");
+    renderAccount(account);
+  } catch (e) {
+    console.error("failed to load account", e);
+  }
+}
+
+unlinkBtnEl.addEventListener("click", async () => {
+  try {
+    await invoke("unlink");
+    refreshAccount();
+  } catch (e) {
+    console.error("unlink failed", e);
+  }
+});
+
 listen("launcher-status", (event) => {
   const payload = event.payload;
   bannerEl.classList.remove("hidden");
@@ -121,6 +153,14 @@ listen("launcher-status", (event) => {
   if (payload.step === "error") {
     bannerRepoEl.textContent = "";
     bannerTextEl.textContent = `Error: ${payload.message}`;
+    return;
+  }
+
+  if (payload.step === "linked") {
+    bannerRepoEl.textContent = "";
+    bannerTextEl.textContent = `Linked as ${payload.user}`;
+    refreshAccount();
+    setTimeout(() => bannerEl.classList.add("hidden"), 2000);
     return;
   }
 
@@ -136,3 +176,4 @@ listen("launcher-status", (event) => {
 });
 
 refreshGallery();
+refreshAccount();

@@ -49,6 +49,66 @@ pub fn is_safe_commit(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// A parsed, signature-verified `securexe://link?user=...&exp=...&sig=...`
+/// request — hands off a device-linking token minted by the website
+/// (lib/signing.ts's signDeviceLinkToken) rather than a repo to run.
+pub struct LinkRequest {
+    pub user: String,
+    pub exp: String,
+    pub sig: String,
+}
+
+/// GitHub usernames are alphanumeric plus single hyphens, capped at 39
+/// chars — this is intentionally a little looser than that (up to 64, no
+/// leading/trailing-hyphen check) since it's not being used as a filesystem
+/// or URL path segment here, just sanity-bounding what gets stored locally
+/// and sent on to the worker.
+fn is_safe_username(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+pub fn parse_link_url(raw: &str) -> Result<LinkRequest, LauncherError> {
+    let url = url::Url::parse(raw).map_err(|e| LauncherError::InvalidUrl(e.to_string()))?;
+
+    if url.scheme() != "securexe" {
+        return Err(LauncherError::InvalidUrl(format!(
+            "unsupported scheme '{}'",
+            url.scheme()
+        )));
+    }
+
+    let action = url.host_str().unwrap_or_default();
+    if action != "link" {
+        return Err(LauncherError::InvalidUrl(format!(
+            "unsupported action '{action}'"
+        )));
+    }
+
+    let mut user_param: Option<String> = None;
+    let mut exp_param: Option<String> = None;
+    let mut sig_param: Option<String> = None;
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "user" => user_param = Some(value.into_owned()),
+            "exp" => exp_param = Some(value.into_owned()),
+            "sig" => sig_param = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+
+    let user = user_param.ok_or_else(|| LauncherError::InvalidUrl("missing user".into()))?;
+    if !is_safe_username(&user) {
+        return Err(LauncherError::InvalidUrl(format!("invalid user '{user}'")));
+    }
+
+    let exp = exp_param.ok_or_else(|| LauncherError::Unauthorized("missing exp".into()))?;
+    let sig = sig_param.ok_or_else(|| LauncherError::Unauthorized("missing sig".into()))?;
+
+    signature::verify_link(&user, &exp, &sig)?;
+
+    Ok(LinkRequest { user, exp, sig })
+}
+
 pub fn parse_run_url(raw: &str) -> Result<RunRequest, LauncherError> {
     let url = url::Url::parse(raw).map_err(|e| LauncherError::InvalidUrl(e.to_string()))?;
 

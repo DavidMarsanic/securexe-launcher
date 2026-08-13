@@ -117,3 +117,95 @@ pub async fn download_to(
 fn urlencoding_component(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
+
+#[derive(Debug, Deserialize)]
+struct DeviceLinkResponse {
+    status: String,
+    #[serde(rename = "deviceToken")]
+    device_token: Option<String>,
+}
+
+/// Trades a signature-verified `securexe://link` token for a durable
+/// per-device bearer token. The worker is expected to independently
+/// re-verify the Ed25519 signature itself (it needs the same public key
+/// baked into signature.rs, which is fine to share since it's a public
+/// key) rather than trust that this binary already checked it — a modified
+/// client could otherwise call this endpoint directly with a forged
+/// payload and no signature check would ever run.
+///
+/// NOTE: `POST /devices/link` doesn't exist on the worker yet — this is a
+/// guessed contract (same seam as securexe-web's `/api/claim` calling a
+/// not-yet-built `/trusted-owners`). Expect this to fail until the worker
+/// side ships a matching endpoint.
+pub async fn exchange_device_link(
+    client: &reqwest::Client,
+    user: &str,
+    exp: &str,
+    sig: &str,
+    device_id: &str,
+) -> Result<String, LauncherError> {
+    let resp = client
+        .post(format!("{ORCHESTRATOR_BASE}/devices/link"))
+        .json(&serde_json::json!({
+            "user": user,
+            "exp": exp,
+            "sig": sig,
+            "deviceId": device_id,
+        }))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "device link exchange failed: {}",
+            resp.status()
+        )));
+    }
+
+    let parsed: DeviceLinkResponse = resp
+        .json()
+        .await
+        .map_err(|e| LauncherError::Network(format!("bad device-link response: {e}")))?;
+
+    if parsed.status != "ok" {
+        return Err(LauncherError::Network(
+            "unexpected device-link response".into(),
+        ));
+    }
+    parsed
+        .device_token
+        .ok_or_else(|| LauncherError::Network("device-link response missing token".into()))
+}
+
+/// Best-effort install/uninstall event report, used to keep the website's
+/// "your library" view in sync with what's actually on this device. Callers
+/// (flow.rs, lib.rs's uninstall command) fire this on a spawned task and
+/// discard the result — reporting failing should never block the local
+/// install/uninstall it's describing. Same not-yet-built-on-the-worker
+/// caveat as exchange_device_link.
+pub async fn report_library_event(
+    client: &reqwest::Client,
+    device_token: &str,
+    repo: &str,
+    commit: Option<&str>,
+    action: &str,
+) -> Result<(), LauncherError> {
+    let resp = client
+        .post(format!("{ORCHESTRATOR_BASE}/library/events"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({
+            "repo": repo,
+            "commit": commit,
+            "action": action,
+        }))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "library event report failed: {}",
+            resp.status()
+        )));
+    }
+    Ok(())
+}

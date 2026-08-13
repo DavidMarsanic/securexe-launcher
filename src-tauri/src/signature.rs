@@ -25,12 +25,7 @@ const MAX_VALIDITY_SECONDS: u64 = 300;
 /// similar) when absent, matching whatever the signer used — this format is
 /// a contract between this code and the website's signing code, not
 /// something either side can change unilaterally.
-pub fn verify(
-    repo_path: &str,
-    commit: Option<&str>,
-    exp: &str,
-    sig_hex: &str,
-) -> Result<(), LauncherError> {
+fn check_validity_window(exp: &str) -> Result<(), LauncherError> {
     let exp_ts: u64 = exp
         .parse()
         .map_err(|_| LauncherError::Unauthorized("invalid exp".into()))?;
@@ -48,9 +43,10 @@ pub fn verify(
             "link validity window is too long".into(),
         ));
     }
+    Ok(())
+}
 
-    let message = format!("{repo_path}|{}|{exp}", commit.unwrap_or(""));
-
+fn verify_signature(message: &str, sig_hex: &str) -> Result<(), LauncherError> {
     let sig_bytes = hex::decode(sig_hex)
         .map_err(|_| LauncherError::Unauthorized("malformed signature".into()))?;
     let sig_array: [u8; 64] = sig_bytes
@@ -64,4 +60,27 @@ pub fn verify(
     verifying_key
         .verify(message.as_bytes(), &signature)
         .map_err(|_| LauncherError::Unauthorized("invalid signature".into()))
+}
+
+pub fn verify(
+    repo_path: &str,
+    commit: Option<&str>,
+    exp: &str,
+    sig_hex: &str,
+) -> Result<(), LauncherError> {
+    check_validity_window(exp)?;
+    let message = format!("{repo_path}|{}|{exp}", commit.unwrap_or(""));
+    verify_signature(&message, sig_hex)
+}
+
+/// Verifies a `securexe://link` device-linking token — same keypair and
+/// validity-window rules as `verify`, but a distinct message shape (the
+/// `link|` prefix) so a signature minted for a run-link can't be replayed
+/// as a link-token or vice versa. This message layout is a contract with
+/// the website's `signDeviceLinkToken` (lib/signing.ts) — don't change one
+/// without the other.
+pub fn verify_link(user: &str, exp: &str, sig_hex: &str) -> Result<(), LauncherError> {
+    check_validity_window(exp)?;
+    let message = format!("link|{user}|{exp}");
+    verify_signature(&message, sig_hex)
 }

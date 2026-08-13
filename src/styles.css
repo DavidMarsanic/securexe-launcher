@@ -35,6 +35,30 @@ body {
   gap: 16px;
 }
 
+.account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.account-bar.hidden {
+  display: none;
+}
+
+.unlink-btn {
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
 .status-banner {
   display: flex;
   align-items: baseline;
