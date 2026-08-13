@@ -107,7 +107,8 @@ async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> 
     };
     library::record_install(&slug, &repo_path, &commit, resolved.executable.clone(), is_gui, icon)?;
 
-    run::launch(&resolved.executable)?;
+    let cwd = install::sandbox_dir(&slug)?;
+    run::launch(&resolved.executable, &cwd)?;
 
     emit(app, StatusEvent::Done { repo: repo_path });
     Ok(())

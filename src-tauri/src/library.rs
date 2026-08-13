@@ -102,3 +102,11 @@ pub fn touch_last_launched(slug: &str) -> Result<(), LauncherError> {
     }
     Ok(())
 }
+
+/// Drops `slug` from the library. Does not touch anything on disk — see
+/// `install::remove_all` for deleting the actual downloaded files.
+pub fn remove(slug: &str) -> Result<(), LauncherError> {
+    let entries = load()?;
+    let filtered: Vec<_> = entries.into_iter().filter(|e| e.slug != slug).collect();
+    save(&filtered)
+}

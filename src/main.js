@@ -47,9 +47,27 @@ function renderGallery(entries) {
     img.alt = "";
 
     const label = document.createElement("span");
+    label.className = "app-tile-label";
     label.textContent = entry.repo.split("/").pop();
 
-    tile.append(img, label);
+    const removeBtn = document.createElement("span");
+    removeBtn.className = "app-tile-remove";
+    removeBtn.textContent = "×";
+    removeBtn.title = `Uninstall ${entry.repo}`;
+    removeBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Uninstall ${entry.repo}? This deletes its downloaded files.`)) {
+        return;
+      }
+      try {
+        await invoke("uninstall", { slug: entry.slug });
+        refreshGallery();
+      } catch (err) {
+        console.error("uninstall failed", err);
+      }
+    });
+
+    tile.append(img, label, removeBtn);
     tile.addEventListener("click", async () => {
       // A double-click fires two separate DOM click events, not one. A
       // local relaunch resolves in single-digit milliseconds, well before

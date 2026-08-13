@@ -75,6 +75,7 @@ body {
 }
 
 .app-tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -110,13 +111,40 @@ body {
   padding: 6px;
 }
 
-.app-tile span {
+.app-tile-label {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: center;
   font-size: 0.85em;
+}
+
+.app-tile-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.app-tile:hover .app-tile-remove,
+.app-tile:focus-within .app-tile-remove {
+  opacity: 1;
+}
+
+.app-tile-remove:hover {
+  background: rgba(200, 40, 40, 0.9);
 }
 
 @media (prefers-color-scheme: dark) {

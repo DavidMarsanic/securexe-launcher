@@ -64,9 +64,19 @@ fn relaunch(slug: String) -> Result<(), String> {
     let entry = library::find(&slug)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("{slug} is not installed"))?;
-    run::launch(&entry.path).map_err(|e| e.to_string())?;
+    let cwd = install::sandbox_dir(&slug).map_err(|e| e.to_string())?;
+    run::launch(&entry.path, &cwd).map_err(|e| e.to_string())?;
     let _ = library::touch_last_launched(&slug);
     Ok(())
+}
+
+/// Removes an app from the gallery and deletes everything it downloaded —
+/// there's no other way to manage what's installed, since installs
+/// deliberately live in a hidden folder rather than somewhere Finder-visible.
+#[tauri::command]
+fn uninstall(slug: String) -> Result<(), String> {
+    install::remove_all(&slug).map_err(|e| e.to_string())?;
+    library::remove(&slug).map_err(|e| e.to_string())
 }
 
 /// Cold starts can deliver the same launch URL through both
@@ -98,7 +108,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
-        .invoke_handler(tauri::generate_handler![list_library, relaunch])
+        .invoke_handler(tauri::generate_handler![list_library, relaunch, uninstall])
         .setup(|app| {
             let handle = app.handle().clone();
 

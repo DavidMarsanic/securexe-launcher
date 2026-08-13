@@ -72,29 +72,58 @@ pub(crate) fn is_gui(_path: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn launch_in_terminal(path: &Path) -> Result<(), LauncherError> {
-    Command::new("open").args(["-a", "Terminal"]).arg(path).spawn()?;
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+#[cfg(target_os = "macos")]
+fn launch_in_terminal(path: &Path, cwd: &Path) -> Result<(), LauncherError> {
+    // `open -a Terminal` always starts its new window's shell in $HOME,
+    // ignoring our own process's cwd entirely — so setting .current_dir()
+    // on this Command wouldn't do anything. A tiny wrapper script that
+    // `cd`s into the sandbox before exec'ing the real binary is the only
+    // way to control where the launched tool actually runs.
+    let wrapper = std::env::temp_dir().join(format!(
+        "securexe-launch-{}.sh",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("app")
+    ));
+    let script = format!(
+        "#!/bin/sh\ncd {} || exit 1\nexec {}\n",
+        shell_quote(cwd),
+        shell_quote(path)
+    );
+    std::fs::write(&wrapper, script)?;
+    make_executable(&wrapper)?;
+
+    Command::new("open").args(["-a", "Terminal"]).arg(&wrapper).spawn()?;
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn launch_in_terminal(path: &Path) -> Result<(), LauncherError> {
-    // The empty "" is a required placeholder for `start`'s window-title
-    // argument — without it, a quoted path is misread as the title.
-    Command::new("cmd").args(["/C", "start", ""]).arg(path).spawn()?;
+fn launch_in_terminal(path: &Path, cwd: &Path) -> Result<(), LauncherError> {
+    // Unlike Terminal.app, `start` inherits its own initial directory from
+    // the cmd process that invokes it — so setting current_dir() here is
+    // enough to carry through to the new console window.
+    Command::new("cmd")
+        .current_dir(cwd)
+        // The empty "" is a required placeholder for `start`'s window-title
+        // argument — without it, a quoted path is misread as the title.
+        .args(["/C", "start", ""])
+        .arg(path)
+        .spawn()?;
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
-fn launch_in_terminal(path: &Path) -> Result<(), LauncherError> {
+fn launch_in_terminal(path: &Path, cwd: &Path) -> Result<(), LauncherError> {
     for terminal in ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"] {
-        if Command::new(terminal).arg("-e").arg(path).spawn().is_ok() {
+        if Command::new(terminal).current_dir(cwd).arg("-e").arg(path).spawn().is_ok() {
             return Ok(());
         }
     }
     // No known terminal emulator available — fall back to a bare spawn
     // rather than failing outright; output just won't be visible.
-    Command::new(path).spawn()?;
+    Command::new(path).current_dir(cwd).spawn()?;
     Ok(())
 }
 
@@ -103,12 +132,16 @@ fn launch_in_terminal(path: &Path) -> Result<(), LauncherError> {
 /// repo/commit/filename can be interpreted as shell syntax. GUI apps open
 /// their own window as normal; anything else gets wrapped in a terminal so
 /// it's actually visible instead of running invisibly in the background.
-pub fn launch(path: &Path) -> Result<(), LauncherError> {
+/// `cwd` is always the app's own sandbox directory, never the user's real
+/// home folder or wherever the launcher process itself happened to start —
+/// a tool that reads or writes "the current directory" should only ever
+/// touch its own sandboxed space.
+pub fn launch(path: &Path, cwd: &Path) -> Result<(), LauncherError> {
     make_executable(path)?;
     if is_gui(path) {
-        Command::new(path).spawn()?;
+        Command::new(path).current_dir(cwd).spawn()?;
     } else {
-        launch_in_terminal(path)?;
+        launch_in_terminal(path, cwd)?;
     }
     Ok(())
 }
