@@ -100,6 +100,34 @@ fn uninstall(slug: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Untracks an app without touching anything it downloaded — distinct from
+/// `uninstall`, which does both. This is for "stop showing this in my
+/// library" (a stale/unwanted entry, a scratch build you don't want synced)
+/// without losing the ability to just relaunch it later; the files are
+/// still sitting in ~/.securexe/apps, just no longer in library.json or
+/// reported as installed on this device.
+#[tauri::command]
+fn remove_from_library(slug: String) -> Result<(), String> {
+    let entry = library::find(&slug).map_err(|e| e.to_string())?;
+    library::remove(&slug).map_err(|e| e.to_string())?;
+
+    if let (Some(entry), Some(acct)) = (entry, account::load().ok().flatten()) {
+        tauri::async_runtime::spawn(async move {
+            let client = reqwest::Client::new();
+            let _ = orchestrator::report_library_event(
+                &client,
+                &acct.device_token,
+                &entry.repo,
+                Some(&entry.commit),
+                "removed",
+            )
+            .await;
+        });
+    }
+
+    Ok(())
+}
+
 /// Sanitized account view for the webview — never the raw device_token,
 /// same discipline as GalleryEntry never exposing raw filesystem paths.
 #[derive(Serialize)]
@@ -178,6 +206,7 @@ pub fn run() {
             list_library,
             relaunch,
             uninstall,
+            remove_from_library,
             get_account,
             unlink
         ])

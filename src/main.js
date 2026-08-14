@@ -30,6 +30,42 @@ const DEFAULT_ICON =
     </svg>
   `);
 
+// Tauri's WKWebView doesn't reliably implement native dialogs like
+// window.confirm() unless the host app wires that up itself, which this
+// doesn't — so a native confirm() here can silently no-op instead of
+// prompting. Click-twice avoids depending on that entirely: the first
+// click arms it, the second (within 3s) commits. Shared by the uninstall
+// and remove-from-library buttons below, which are otherwise identical
+// interactions with different destinations.
+function makeConfirmButton({ className, symbol, idleTitle, confirmTitle, onConfirm }) {
+  const btn = document.createElement("span");
+  btn.className = className;
+  btn.textContent = symbol;
+  btn.title = idleTitle;
+  let confirmTimer = null;
+
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+
+    if (!btn.classList.contains("confirming")) {
+      btn.classList.add("confirming");
+      btn.textContent = "✓";
+      btn.title = confirmTitle;
+      confirmTimer = setTimeout(() => {
+        btn.classList.remove("confirming");
+        btn.textContent = symbol;
+        btn.title = idleTitle;
+      }, 3000);
+      return;
+    }
+
+    clearTimeout(confirmTimer);
+    await onConfirm();
+  });
+
+  return btn;
+}
+
 function renderGallery(entries) {
   galleryEl.innerHTML = "";
   emptyStateEl.classList.toggle("hidden", entries.length > 0);
@@ -53,41 +89,40 @@ function renderGallery(entries) {
     label.className = "app-tile-label";
     label.textContent = entry.repo.split("/").pop();
 
-    const removeBtn = document.createElement("span");
-    removeBtn.className = "app-tile-remove";
-    removeBtn.textContent = "×";
-    removeBtn.title = `Uninstall ${entry.repo}`;
-    let confirmTimer = null;
-    removeBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-
-      // Tauri's WKWebView doesn't reliably implement native dialogs like
-      // window.confirm() unless the host app wires that up itself, which
-      // this doesn't — so a native confirm() here can silently no-op
-      // instead of prompting. Click-twice avoids depending on that
-      // entirely: the first click arms it, the second (within 3s) commits.
-      if (!removeBtn.classList.contains("confirming")) {
-        removeBtn.classList.add("confirming");
-        removeBtn.textContent = "✓";
-        removeBtn.title = `Click again to uninstall ${entry.repo}`;
-        confirmTimer = setTimeout(() => {
-          removeBtn.classList.remove("confirming");
-          removeBtn.textContent = "×";
-          removeBtn.title = `Uninstall ${entry.repo}`;
-        }, 3000);
-        return;
-      }
-
-      clearTimeout(confirmTimer);
-      try {
-        await invoke("uninstall", { slug: entry.slug });
-        refreshGallery();
-      } catch (err) {
-        console.error("uninstall failed", err);
-      }
+    // Destructive: deletes the actual download too.
+    const uninstallBtn = makeConfirmButton({
+      className: "app-tile-remove",
+      symbol: "×",
+      idleTitle: `Uninstall ${entry.repo}`,
+      confirmTitle: `Click again to uninstall ${entry.repo}`,
+      onConfirm: async () => {
+        try {
+          await invoke("uninstall", { slug: entry.slug });
+          refreshGallery();
+        } catch (err) {
+          console.error("uninstall failed", err);
+        }
+      },
     });
 
-    tile.append(img, label, removeBtn);
+    // Non-destructive: drops it from the library (local and synced) but
+    // leaves the downloaded files alone — relaunching later re-adds it.
+    const untrackBtn = makeConfirmButton({
+      className: "app-tile-untrack",
+      symbol: "−",
+      idleTitle: `Remove ${entry.repo} from library (keeps the download)`,
+      confirmTitle: `Click again to remove ${entry.repo} from your library`,
+      onConfirm: async () => {
+        try {
+          await invoke("remove_from_library", { slug: entry.slug });
+          refreshGallery();
+        } catch (err) {
+          console.error("remove from library failed", err);
+        }
+      },
+    });
+
+    tile.append(img, label, uninstallBtn, untrackBtn);
     tile.addEventListener("click", async () => {
       // A double-click fires two separate DOM click events, not one. A
       // local relaunch resolves in single-digit milliseconds, well before
