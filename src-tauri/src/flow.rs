@@ -161,8 +161,30 @@ async fn link_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError>
     let device_token =
         orchestrator::exchange_device_link(&client, &req.user, &req.exp, &req.sig, &device_id)
             .await?;
-    account::record_link(req.user.clone(), device_token)?;
+    account::record_link(req.user.clone(), device_token.clone())?;
 
     emit(app, StatusEvent::Linked { user: req.user });
+
+    // Backfill: report everything already in the local library, not just
+    // installs/uninstalls from this point forward — otherwise anything
+    // installed before this device got linked would never be visible on
+    // the website, even though it's genuinely present on disk. Re-linking
+    // an already-linked device just re-reports the same "installed" state,
+    // which is a harmless no-op upsert on the worker's side.
+    if let Ok(entries) = library::load() {
+        tauri::async_runtime::spawn(async move {
+            for entry in entries {
+                let _ = orchestrator::report_library_event(
+                    &client,
+                    &device_token,
+                    &entry.repo,
+                    Some(&entry.commit),
+                    "installed",
+                )
+                .await;
+            }
+        });
+    }
+
     Ok(())
 }
