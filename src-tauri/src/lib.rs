@@ -120,8 +120,18 @@ fn get_account() -> Result<Option<AccountInfo>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Tells the worker this device is disconnecting before forgetting the
+/// device token locally — the token is the only credential that call can
+/// authenticate with, so it has to happen before account::clear(), not
+/// after. Best-effort: local state clears regardless of whether the worker
+/// call succeeds, since the user explicitly asked to unlink and a network
+/// hiccup shouldn't trap them in a "linked" state they can't get out of.
 #[tauri::command]
-fn unlink() -> Result<(), String> {
+async fn unlink() -> Result<(), String> {
+    if let Some(acct) = account::load().ok().flatten() {
+        let client = reqwest::Client::new();
+        let _ = orchestrator::unlink_device(&client, &acct.device_token).await;
+    }
     account::clear().map_err(|e| e.to_string())
 }
 

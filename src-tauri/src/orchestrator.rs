@@ -209,3 +209,29 @@ pub async fn report_library_event(
     }
     Ok(())
 }
+
+/// Disconnects this device from the account on the worker side — called
+/// from the `unlink` command while the device token is still in hand.
+/// Without this, unlinking only ever cleared local state, so the website
+/// went on listing a device the user had explicitly disconnected.
+///
+/// NOTE: `POST /devices/unlink` doesn't exist on the worker yet — same
+/// not-yet-built seam as exchange_device_link/report_library_event.
+pub async fn unlink_device(
+    client: &reqwest::Client,
+    device_token: &str,
+) -> Result<(), LauncherError> {
+    let resp = client
+        .post(format!("{ORCHESTRATOR_BASE}/devices/unlink"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "device unlink failed: {}",
+            resp.status()
+        )));
+    }
+    Ok(())
+}
