@@ -30,41 +30,170 @@ const DEFAULT_ICON =
     </svg>
   `);
 
+// Slugs check_updates last reported as having a newer build available.
+// Populated asynchronously after the gallery itself renders — updates
+// shouldn't block getting tiles on screen — and re-checked whenever the
+// window regains focus, since this app is typically opened briefly rather
+// than left running.
+let updatable = new Set();
+
+function applyUpdateBadges() {
+  for (const tile of galleryEl.querySelectorAll(".app-tile")) {
+    tile.classList.toggle("has-update", updatable.has(tile.dataset.slug));
+  }
+}
+
+async function checkUpdates() {
+  try {
+    const results = await invoke("check_updates");
+    updatable = new Set(results.map((r) => r.slug));
+    applyUpdateBadges();
+  } catch (e) {
+    console.error("check_updates failed", e);
+  }
+}
+
+// ---- right-click context menu -----------------------------------------
+
+let openMenu = null;
+
+function closeMenu() {
+  if (!openMenu) return;
+  openMenu.remove();
+  openMenu = null;
+  document.removeEventListener("pointerdown", handleOutsideClick, true);
+  document.removeEventListener("keydown", handleEscape, true);
+}
+
+function handleOutsideClick(e) {
+  if (openMenu && !openMenu.contains(e.target)) closeMenu();
+}
+
+function handleEscape(e) {
+  if (e.key === "Escape") closeMenu();
+}
+
 // Tauri's WKWebView doesn't reliably implement native dialogs like
 // window.confirm() unless the host app wires that up itself, which this
-// doesn't — so a native confirm() here can silently no-op instead of
+// doesn't — so a real confirm() here can silently no-op instead of
 // prompting. Click-twice avoids depending on that entirely: the first
-// click arms it, the second (within 3s) commits. Shared by the uninstall
-// and remove-from-library buttons below, which are otherwise identical
-// interactions with different destinations.
-function makeConfirmButton({ className, symbol, idleTitle, confirmTitle, onConfirm }) {
-  const btn = document.createElement("span");
-  btn.className = className;
-  btn.textContent = symbol;
-  btn.title = idleTitle;
+// click arms it, the second (within 3s) commits.
+function makeMenuItem({ className, label, confirmLabel, onActivate }) {
+  const item = document.createElement("button");
+  item.className = className;
+  item.type = "button";
+  item.textContent = label;
+
+  if (!confirmLabel) {
+    item.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeMenu();
+      onActivate();
+    });
+    return item;
+  }
+
   let confirmTimer = null;
-
-  btn.addEventListener("click", async (e) => {
+  item.addEventListener("click", (e) => {
     e.stopPropagation();
-
-    if (!btn.classList.contains("confirming")) {
-      btn.classList.add("confirming");
-      btn.textContent = "✓";
-      btn.title = confirmTitle;
+    if (!item.classList.contains("confirming")) {
+      item.classList.add("confirming");
+      item.textContent = confirmLabel;
       confirmTimer = setTimeout(() => {
-        btn.classList.remove("confirming");
-        btn.textContent = symbol;
-        btn.title = idleTitle;
+        item.classList.remove("confirming");
+        item.textContent = label;
       }, 3000);
       return;
     }
-
     clearTimeout(confirmTimer);
-    await onConfirm();
+    closeMenu();
+    onActivate();
   });
-
-  return btn;
+  return item;
 }
+
+function showContextMenu(x, y, entry) {
+  closeMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+
+  // Most prominent thing in the menu, and the only reason this menu might
+  // open with something already "armed" to draw the eye — everything else
+  // here is equally available at any time, but an available update is the
+  // one thing worth surfacing proactively.
+  if (updatable.has(entry.slug)) {
+    const updateItem = makeMenuItem({
+      className: "context-menu-item context-menu-update",
+      label: "● Update available",
+      onActivate: async () => {
+        try {
+          await invoke("update_slug", { slug: entry.slug });
+          // install_and_launch also emits a "done" launcher-status event,
+          // which already triggers a full refreshGallery() — this just
+          // clears the badge immediately rather than waiting on that
+          // round-trip.
+          updatable.delete(entry.slug);
+          applyUpdateBadges();
+        } catch (err) {
+          console.error("update failed", err);
+        }
+      },
+    });
+    menu.appendChild(updateItem);
+    menu.appendChild(Object.assign(document.createElement("div"), { className: "context-menu-separator" }));
+  }
+
+  menu.appendChild(
+    makeMenuItem({
+      className: "context-menu-item context-menu-destructive",
+      label: "Uninstall",
+      confirmLabel: "Click again to uninstall",
+      onActivate: async () => {
+        try {
+          await invoke("uninstall", { slug: entry.slug });
+          refreshGallery();
+        } catch (err) {
+          console.error("uninstall failed", err);
+        }
+      },
+    })
+  );
+
+  menu.appendChild(
+    makeMenuItem({
+      className: "context-menu-item",
+      label: "Remove from library",
+      confirmLabel: "Click again to remove",
+      onActivate: async () => {
+        try {
+          await invoke("remove_from_library", { slug: entry.slug });
+          refreshGallery();
+        } catch (err) {
+          console.error("remove from library failed", err);
+        }
+      },
+    })
+  );
+
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  const left = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4));
+  const top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+
+  openMenu = menu;
+  // Deferred so the contextmenu event's own click/pointerdown doesn't
+  // immediately trigger the outside-click handler that just got attached.
+  setTimeout(() => {
+    document.addEventListener("pointerdown", handleOutsideClick, true);
+    document.addEventListener("keydown", handleEscape, true);
+  }, 0);
+}
+
+// ---- gallery ------------------------------------------------------------
 
 function renderGallery(entries) {
   galleryEl.innerHTML = "";
@@ -80,6 +209,7 @@ function renderGallery(entries) {
     const tile = document.createElement("button");
     tile.className = "app-tile";
     tile.title = entry.repo;
+    tile.dataset.slug = entry.slug;
 
     const img = document.createElement("img");
     img.src = entry.icon_data_url ?? DEFAULT_ICON;
@@ -89,40 +219,17 @@ function renderGallery(entries) {
     label.className = "app-tile-label";
     label.textContent = entry.repo.split("/").pop();
 
-    // Destructive: deletes the actual download too.
-    const uninstallBtn = makeConfirmButton({
-      className: "app-tile-remove",
-      symbol: "×",
-      idleTitle: `Uninstall ${entry.repo}`,
-      confirmTitle: `Click again to uninstall ${entry.repo}`,
-      onConfirm: async () => {
-        try {
-          await invoke("uninstall", { slug: entry.slug });
-          refreshGallery();
-        } catch (err) {
-          console.error("uninstall failed", err);
-        }
-      },
+    const badge = document.createElement("span");
+    badge.className = "app-tile-update-badge";
+    badge.title = "Update available";
+
+    tile.append(img, badge, label);
+
+    tile.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, entry);
     });
 
-    // Non-destructive: drops it from the library (local and synced) but
-    // leaves the downloaded files alone — relaunching later re-adds it.
-    const untrackBtn = makeConfirmButton({
-      className: "app-tile-untrack",
-      symbol: "−",
-      idleTitle: `Remove ${entry.repo} from library (keeps the download)`,
-      confirmTitle: `Click again to remove ${entry.repo} from your library`,
-      onConfirm: async () => {
-        try {
-          await invoke("remove_from_library", { slug: entry.slug });
-          refreshGallery();
-        } catch (err) {
-          console.error("remove from library failed", err);
-        }
-      },
-    });
-
-    tile.append(img, label, uninstallBtn, untrackBtn);
     tile.addEventListener("click", async () => {
       // A double-click fires two separate DOM click events, not one. A
       // local relaunch resolves in single-digit milliseconds, well before
@@ -141,6 +248,8 @@ function renderGallery(entries) {
     });
     galleryEl.appendChild(tile);
   }
+
+  applyUpdateBadges();
 }
 
 async function refreshGallery() {
@@ -150,6 +259,7 @@ async function refreshGallery() {
   } catch (e) {
     console.error("failed to load library", e);
   }
+  checkUpdates();
 }
 
 // Linking only ever happens by receiving a `securexe://link` deep link from
@@ -209,6 +319,8 @@ listen("launcher-status", (event) => {
     setTimeout(() => bannerEl.classList.add("hidden"), 2000);
   }
 });
+
+window.addEventListener("focus", checkUpdates);
 
 refreshGallery();
 refreshAccount();

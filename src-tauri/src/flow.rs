@@ -32,20 +32,41 @@ pub async fn handle_run_url(app: AppHandle, raw_url: String) {
 
 async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> {
     let req = repo::parse_run_url(raw_url)?;
-    let repo_path = req.repo_path();
+    install_and_launch(app, req.repo_path(), req.slug(), req.commit.clone()).await
+}
+
+/// Fetches (if not already cached), verifies, installs, and launches an
+/// app — shared by two callers with different trust models:
+///
+/// - `run_inner`, for a signed `securexe://run` deep link: the signature is
+///   what authorizes *installing something onto this machine at all*, since
+///   the OS gives the launcher no way to know which website a custom-scheme
+///   link was clicked from (see repo.rs).
+/// - the in-app "Update" action (`update_slug` in lib.rs), for an app
+///   that's already installed: no signature is involved because none is
+///   needed — the user already trusted this exact repo once, and this is
+///   only ever reachable by right-clicking something already sitting in
+///   their own library, not by a webpage. It just re-runs this same
+///   fetch/verify/install/launch sequence with `requested_commit: None`,
+///   which resolves to whatever the manifest currently reports as latest.
+pub async fn install_and_launch(
+    app: &AppHandle,
+    repo_path: String,
+    slug: String,
+    requested_commit: Option<String>,
+) -> Result<(), LauncherError> {
     emit(app, StatusEvent::Resolving { repo: repo_path.clone() });
 
     let target = platform::target_key()?;
-    let slug = req.slug();
     let client = reqwest::Client::builder().build()?;
 
-    let manifest = orchestrator::fetch_manifest(&client, &slug, req.commit.as_deref()).await?;
+    let manifest = orchestrator::fetch_manifest(&client, &slug, requested_commit.as_deref()).await?;
 
     let commit = manifest
         .source
         .as_ref()
         .map(|s| s.commit.clone())
-        .or_else(|| req.commit.clone())
+        .or(requested_commit)
         .filter(|c| repo::is_safe_commit(c))
         .ok_or_else(|| LauncherError::NotFound(format!("no resolvable commit for {repo_path}")))?;
 

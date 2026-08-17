@@ -128,6 +128,56 @@ fn remove_from_library(slug: String) -> Result<(), String> {
     Ok(())
 }
 
+/// One installed app with a newer build available than what's currently
+/// on disk (`library::LibraryEntry.commit`). The frontend never sees a
+/// commit hash for its own sake — just enough to know which tiles get the
+/// update badge.
+#[derive(Serialize)]
+struct UpdateStatus {
+    slug: String,
+}
+
+/// Checks every installed app against the orchestrator's current manifest
+/// for that repo (no `commit` param = latest) and reports which ones are
+/// behind. Runs all the checks concurrently — with a library of a dozen+
+/// apps, doing this one at a time would make the "is anything updatable"
+/// signal noticeably slow to arrive for something that's meant to be the
+/// most prominent thing in the UI. A single app's check failing (offline,
+/// repo deleted upstream, etc.) just drops it from the result silently
+/// rather than failing the whole batch — one bad repo shouldn't hide
+/// legitimate updates for everything else.
+#[tauri::command]
+async fn check_updates() -> Result<Vec<UpdateStatus>, String> {
+    let entries = library::load().map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
+
+    let checks = entries.into_iter().map(|entry| {
+        let client = client.clone();
+        async move {
+            let manifest = orchestrator::fetch_manifest(&client, &entry.slug, None).await.ok()?;
+            let latest = manifest.source?.commit;
+            (latest != entry.commit).then_some(UpdateStatus { slug: entry.slug })
+        }
+    });
+
+    Ok(futures_util::future::join_all(checks).await.into_iter().flatten().collect())
+}
+
+/// Updates one app to whatever the orchestrator currently reports as the
+/// latest build for its repo, then launches it — reusing the exact same
+/// fetch/verify/install/launch path (and the same `launcher-status`
+/// progress events) as opening a fresh `securexe://run` link. See
+/// `flow::install_and_launch` for why this doesn't need a signature here.
+#[tauri::command]
+async fn update_slug(app: tauri::AppHandle, slug: String) -> Result<(), String> {
+    let entry = library::find(&slug)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{slug} is not installed"))?;
+    flow::install_and_launch(&app, entry.repo, slug, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Sanitized account view for the webview — never the raw device_token,
 /// same discipline as GalleryEntry never exposing raw filesystem paths.
 #[derive(Serialize)]
@@ -207,6 +257,8 @@ pub fn run() {
             relaunch,
             uninstall,
             remove_from_library,
+            check_updates,
+            update_slug,
             get_account,
             unlink
         ])

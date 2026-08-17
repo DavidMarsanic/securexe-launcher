@@ -11,6 +11,7 @@
   --tile-hover: #eef0ff;
   --banner-bg: #e8e8f5;
   --muted: rgba(15, 15, 15, 0.55);
+  --accent: #3b6bf6;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -144,71 +145,85 @@ body {
   font-size: 0.85em;
 }
 
-.app-tile-remove {
+/* Uninstall/Remove from library moved into the right-click context menu
+   (see .context-menu below) — a tile only ever shows the update badge
+   directly, since an available update is the one thing worth surfacing
+   without the user having to go looking for it. */
+
+.app-tile-update-badge {
+  display: none;
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  top: 4px;
+  right: 16px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 13px;
-  line-height: 1;
-  opacity: 0;
-  transition: opacity 0.1s;
+  background: var(--accent, #3b6bf6);
+  border: 2px solid var(--tile-bg);
+  box-shadow: 0 0 0 1px var(--accent, #3b6bf6);
 }
 
-.app-tile:hover .app-tile-remove,
-.app-tile:focus-within .app-tile-remove {
-  opacity: 1;
+.app-tile.has-update .app-tile-update-badge {
+  display: block;
+  animation: update-badge-pulse 2s ease-in-out infinite;
 }
 
-.app-tile-remove:hover {
-  background: rgba(200, 40, 40, 0.9);
+.app-tile.has-update img {
+  box-shadow: 0 0 0 2px var(--accent, #3b6bf6);
 }
 
-.app-tile-remove.confirming {
-  opacity: 1;
-  background: rgba(200, 40, 40, 0.95);
+@keyframes update-badge-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.75; }
 }
 
-/* Opposite corner from app-tile-remove, and a neutral (not red) hover
-   color — this one doesn't delete anything, so it shouldn't look like it
-   does. */
-.app-tile-untrack {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 13px;
-  line-height: 1;
-  opacity: 0;
-  transition: opacity 0.1s;
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--tile-bg);
+  border: 1px solid var(--tile-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
-.app-tile:hover .app-tile-untrack,
-.app-tile:focus-within .app-tile-untrack {
-  opacity: 1;
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.app-tile-untrack:hover {
-  background: rgba(90, 90, 100, 0.9);
+.context-menu-item:hover {
+  background: var(--tile-hover);
 }
 
-.app-tile-untrack.confirming {
-  opacity: 1;
-  background: rgba(90, 90, 100, 0.95);
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--tile-border);
+}
+
+.context-menu-update {
+  font-weight: 600;
+  color: var(--accent, #3b6bf6);
+}
+
+.context-menu-destructive {
+  color: #c82828;
+}
+
+.context-menu-destructive.confirming,
+.context-menu-item.confirming {
+  background: rgba(200, 40, 40, 0.12);
+  color: #c82828;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -220,5 +235,6 @@ body {
     --tile-hover: #40405a;
     --banner-bg: #3a3a4a;
     --muted: rgba(246, 246, 246, 0.6);
+    --accent: #6b8dfa;
   }
 }
