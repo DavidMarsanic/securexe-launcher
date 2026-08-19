@@ -291,6 +291,24 @@ unlinkBtnEl.addEventListener("click", async () => {
   }
 });
 
+// Prototype-only — see the matching comment in index.html and hosted.rs.
+const hostedTestBtnEl = document.querySelector("#hosted-test-btn");
+hostedTestBtnEl?.addEventListener("click", async () => {
+  hostedTestBtnEl.disabled = true;
+  try {
+    await invoke("launch_hosted_test", {
+      slug: "gif-maker-test",
+      title: "GIF Maker",
+      path: "/Users/david/Developer/gif-maker/gif-maker",
+    });
+  } catch (e) {
+    console.error("hosted test failed", e);
+    alert("hosted test failed: " + e);
+  } finally {
+    hostedTestBtnEl.disabled = false;
+  }
+});
+
 listen("launcher-status", (event) => {
   const payload = event.payload;
   bannerEl.classList.remove("hidden");
