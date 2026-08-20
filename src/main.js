@@ -71,7 +71,7 @@ async function checkLauncherUpdate() {
       return;
     }
     pendingLauncherDownloadUrl = update.download_url;
-    launcherUpdateTextEl.textContent = `A new version of Securexe Launcher is available (v${update.version}).`;
+    launcherUpdateTextEl.textContent = `A new version of Brightencode is available (v${update.version}).`;
     launcherUpdateBannerEl.classList.remove("hidden");
   } catch (e) {
     console.error("check_launcher_update failed", e);

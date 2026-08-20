@@ -106,7 +106,7 @@ fn download_url_for_this_platform() -> Result<String, LauncherError> {
 /// conversation this came out of).
 #[cfg(target_os = "macos")]
 fn build_update_script(dmg_url: &str) -> String {
-    let app_name = "Securexe Launcher.app";
+    let app_name = "Brightencode.app";
     // Matches the Cargo package/bin name (no [[bin]] override in
     // Cargo.toml, so the binary defaults to the package name) — this is
     // the actual process name macOS shows for `pkill -x`, not the
@@ -116,7 +116,7 @@ fn build_update_script(dmg_url: &str) -> String {
     format!(
         r#"#!/bin/sh
 set -e
-echo "Updating Securexe Launcher..."
+echo "Updating Brightencode..."
 TMP_DMG=$(mktemp -t securexe-launcher-update).dmg
 curl -fL "{dmg_url}" -o "$TMP_DMG"
 
@@ -140,7 +140,20 @@ xattr -dr com.apple.quarantine "/Applications/{app_name}"
 
 echo "Relaunching..."
 open "/Applications/{app_name}"
-echo "Done — you can close this window."
+echo "Done — this window will close in a moment."
+
+# Close this Terminal window on its own instead of leaving the user to do
+# it by hand. Targeted by controlling tty (unique to this window, so this
+# is safe with other Terminal windows open) and fired from a disowned
+# background subshell after a short delay so this script has already
+# exited by the time it runs — Terminal only shows a "process still
+# running" confirmation when asked to close a window that still has one,
+# so letting our own process end first avoids that prompt entirely.
+THIS_TTY=$(tty 2>/dev/null || true)
+if [ -n "$THIS_TTY" ]; then
+  (sleep 1; osascript -e "tell application \"Terminal\" to close (first window whose tty is \"$THIS_TTY\")" >/dev/null 2>&1) &
+  disown
+fi
 "#,
     )
 }
@@ -201,10 +214,10 @@ mod tests {
     fn update_script_is_valid_shell_in_correct_order() {
         let script = build_update_script("https://example.com/fake.dmg");
 
-        for step in ["curl", "pkill", "hdiutil attach", "cp -R", "hdiutil detach", "xattr -dr com.apple.quarantine", "open "] {
+        for step in ["curl", "pkill", "hdiutil attach", "cp -R", "hdiutil detach", "xattr -dr com.apple.quarantine", "open ", "tty", "close (first window"] {
             assert!(script.contains(step), "script is missing step: {step}");
         }
-        let order = ["curl", "pkill", "hdiutil attach", "cp -R", "xattr -dr", "open \""];
+        let order = ["curl", "pkill", "hdiutil attach", "cp -R", "xattr -dr", "open \"", "tty", "close (first window"];
         let positions: Vec<_> = order.iter().map(|s| script.find(s).unwrap_or_else(|| panic!("missing {s}"))).collect();
         assert!(positions.windows(2).all(|w| w[0] < w[1]), "steps are out of order: {positions:?}");
 

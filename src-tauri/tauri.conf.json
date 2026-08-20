@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Securexe Launcher",
+  "productName": "Brightencode",
   "version": "0.1.0",
   "identifier": "com.brightencode.securexe-launcher",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Securexe Launcher",
+        "title": "Brightencode",
         "width": 640,
         "height": 480,
         "minWidth": 360,
