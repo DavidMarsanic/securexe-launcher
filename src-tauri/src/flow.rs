@@ -34,11 +34,11 @@ pub async fn handle_run_url(app: AppHandle, raw_url: String) {
 
 async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> {
     let req = repo::parse_run_url(raw_url)?;
-    install_and_launch(app, req.repo_path(), req.slug(), req.commit.clone()).await
+    install_and_launch(app, req.repo_path(), req.slug(), req.commit.clone(), true).await
 }
 
-/// Fetches (if not already cached), verifies, installs, and launches an
-/// app — shared by two callers with different trust models:
+/// Fetches (if not already cached), verifies, installs, and (optionally)
+/// launches an app — shared by three callers with different trust models:
 ///
 /// - `run_inner`, for a signed `securexe://run` deep link: the signature is
 ///   what authorizes *installing something onto this machine at all*, since
@@ -51,11 +51,16 @@ async fn run_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError> 
 ///   their own library, not by a webpage. It just re-runs this same
 ///   fetch/verify/install/launch sequence with `requested_commit: None`,
 ///   which resolves to whatever the manifest currently reports as latest.
+/// - the in-app "Update all" action (`update_all` in lib.rs): same as a
+///   single `update_slug`, but with `launch: false` — updating everything
+///   stale shouldn't pop open a window for every app that happened to have
+///   a new build.
 pub async fn install_and_launch(
     app: &AppHandle,
     repo_path: String,
     slug: String,
     requested_commit: Option<String>,
+    launch: bool,
 ) -> Result<(), LauncherError> {
     emit(app, StatusEvent::Resolving { repo: repo_path.clone() });
 
@@ -159,9 +164,11 @@ pub async fn install_and_launch(
         }
     }
 
-    let cwd = install::sandbox_dir(&slug)?;
-    let title = display_title(&repo_path);
-    launch_installed(app, &slug, &title, &resolved.executable, &cwd, is_gui).await?;
+    if launch {
+        let cwd = install::sandbox_dir(&slug)?;
+        let title = display_title(&repo_path);
+        launch_installed(app, &slug, &title, &resolved.executable, &cwd, is_gui).await?;
+    }
 
     emit(app, StatusEvent::Done { repo: repo_path });
     Ok(())

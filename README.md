@@ -37,7 +37,7 @@ Note: `cargo tauri dev` runs the raw debug binary, which is not a registered `.a
 
 ```
 cargo tauri build --debug
-open "src-tauri/target/debug/bundle/macos/Securexe Launcher.app"
+open "src-tauri/target/debug/bundle/macos/Brightencode Launcher.app"
 open "securexe://run?repo=gohugoio/hugo"   # a real repo already built on the live orchestrator
 ```
 

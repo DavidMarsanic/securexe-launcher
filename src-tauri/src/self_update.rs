@@ -106,7 +106,7 @@ fn download_url_for_this_platform() -> Result<String, LauncherError> {
 /// conversation this came out of).
 #[cfg(target_os = "macos")]
 fn build_update_script(dmg_url: &str) -> String {
-    let app_name = "Brightencode.app";
+    let app_name = "Brightencode Launcher.app";
     // Matches the Cargo package/bin name (no [[bin]] override in
     // Cargo.toml, so the binary defaults to the package name) — this is
     // the actual process name macOS shows for `pkill -x`, not the
@@ -116,7 +116,7 @@ fn build_update_script(dmg_url: &str) -> String {
     format!(
         r#"#!/bin/sh
 set -e
-echo "Updating Brightencode..."
+echo "Updating Brightencode Launcher..."
 TMP_DMG=$(mktemp -t securexe-launcher-update).dmg
 curl -fL "{dmg_url}" -o "$TMP_DMG"
 

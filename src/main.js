@@ -12,6 +12,9 @@ const unlinkBtnEl = document.querySelector("#unlink-btn");
 const launcherUpdateBannerEl = document.querySelector("#launcher-update-banner");
 const launcherUpdateTextEl = document.querySelector("#launcher-update-text");
 const launcherUpdateDownloadBtnEl = document.querySelector("#launcher-update-download-btn");
+const updateAllBannerEl = document.querySelector("#update-all-banner");
+const updateAllTextEl = document.querySelector("#update-all-text");
+const updateAllBtnEl = document.querySelector("#update-all-btn");
 
 const STEP_LABEL = {
   resolving: "Resolving…",
@@ -46,15 +49,51 @@ function applyUpdateBadges() {
   }
 }
 
+// Only worth surfacing as its own prompt once there's more than one app to
+// update — a single stale app is already covered by its tile's pulsing
+// badge and the "Update available" item in its right-click menu.
+function refreshUpdateAllBanner() {
+  if (updateAllBtnEl.disabled) return; // an update-all run is in flight
+  if (updatable.size > 1) {
+    updateAllTextEl.textContent = `${updatable.size} updates available.`;
+    updateAllBannerEl.classList.remove("hidden");
+  } else {
+    updateAllBannerEl.classList.add("hidden");
+  }
+}
+
 async function checkUpdates() {
   try {
     const results = await invoke("check_updates");
     updatable = new Set(results.map((r) => r.slug));
     applyUpdateBadges();
+    refreshUpdateAllBanner();
   } catch (e) {
     console.error("check_updates failed", e);
   }
 }
+
+updateAllBtnEl.addEventListener("click", async () => {
+  updateAllBtnEl.disabled = true;
+  updateAllTextEl.textContent = "Updating all…";
+
+  let failed = [];
+  try {
+    failed = await invoke("update_all");
+  } catch (e) {
+    console.error("update_all failed", e);
+    updateAllBtnEl.disabled = false;
+    updateAllTextEl.textContent = `Update all failed: ${e}`;
+    return;
+  }
+
+  updateAllBtnEl.disabled = false;
+  await checkUpdates(); // refreshes badges + this banner from the new update set
+  if (failed.length > 0) {
+    updateAllTextEl.textContent = `Updated, but ${failed.length} failed: ${failed.join(", ")}`;
+    updateAllBannerEl.classList.remove("hidden");
+  }
+});
 
 let pendingLauncherDownloadUrl = null;
 
@@ -71,7 +110,7 @@ async function checkLauncherUpdate() {
       return;
     }
     pendingLauncherDownloadUrl = update.download_url;
-    launcherUpdateTextEl.textContent = `A new version of Brightencode is available (v${update.version}).`;
+    launcherUpdateTextEl.textContent = `A new version of Brightencode Launcher is available (v${update.version}).`;
     launcherUpdateBannerEl.classList.remove("hidden");
   } catch (e) {
     console.error("check_launcher_update failed", e);

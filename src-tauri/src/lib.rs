@@ -178,9 +178,47 @@ async fn update_slug(app: tauri::AppHandle, slug: String) -> Result<(), String> 
     let entry = library::find(&slug)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("{slug} is not installed"))?;
-    flow::install_and_launch(&app, entry.repo, slug, None)
+    flow::install_and_launch(&app, entry.repo, slug, None, true)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Updates every installed app that's currently behind, without launching
+/// any of them — unlike `update_slug` above (reachable only by right-
+/// clicking one specific tile, where relaunching that one app afterward
+/// makes sense), this is a "bring the whole library up to date" action, and
+/// popping open a window for every app that happened to be stale would be
+/// unwanted. Re-checks staleness itself rather than trusting the frontend's
+/// `updatable` set, since that's just a cache of whatever `check_updates`
+/// last reported and may be out of date by the time the user clicks
+/// through. Updates sequentially (not concurrently) so the shared
+/// `launcher-status` banner shows one coherent progression instead of
+/// several apps' steps interleaved. Same "one bad repo shouldn't sink the
+/// rest" philosophy as `check_updates`: a failure just gets logged and its
+/// slug added to the returned list, everything else still gets updated.
+#[tauri::command]
+async fn update_all(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let entries = library::load().map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
+
+    let checks = entries.iter().map(|entry| {
+        let client = client.clone();
+        async move {
+            let manifest = orchestrator::fetch_manifest(&client, &entry.slug, None).await.ok()?;
+            let latest = manifest.source?.commit;
+            (latest != entry.commit).then(|| entry.clone())
+        }
+    });
+    let stale: Vec<_> = futures_util::future::join_all(checks).await.into_iter().flatten().collect();
+
+    let mut failed = Vec::new();
+    for entry in stale {
+        if let Err(e) = flow::install_and_launch(&app, entry.repo, entry.slug.clone(), None, false).await {
+            eprintln!("[update_all] failed to update {}: {e}", entry.slug);
+            failed.push(entry.slug);
+        }
+    }
+    Ok(failed)
 }
 
 /// Sanitized account view for the webview — never the raw device_token,
@@ -308,6 +346,7 @@ pub fn run() {
             remove_from_library,
             check_updates,
             update_slug,
+            update_all,
             get_account,
             unlink,
             check_launcher_update,
