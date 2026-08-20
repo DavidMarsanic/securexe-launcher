@@ -13,7 +13,7 @@ mod self_update;
 mod signature;
 mod verify;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -113,6 +113,84 @@ async fn browse_catalog(query: Option<String>) -> Result<Vec<CatalogEntry>, Stri
             icon_url: r.icon_url,
         })
         .collect())
+}
+
+/// Removes `repo` from the account's library — the My Apps library
+/// section's "Remove" action, for an app that isn't installed on *this*
+/// device (if it were, `remove_from_library`/`uninstall` above would apply
+/// instead, since those have a local library.json entry to key off).
+/// There's no local state to update here — this is purely a backend call
+/// — so unlike `uninstall`/`remove_from_library`'s fire-and-forget spawn,
+/// this is awaited: with nothing local to fall back on, the frontend needs
+/// to know honestly whether it actually took, not optimistically assume it
+/// did just because the local half (which doesn't exist here) succeeded.
+#[tauri::command]
+async fn remove_from_account(repo: String) -> Result<(), String> {
+    if !repo::is_safe_repo_path(&repo) {
+        return Err(format!("invalid repo '{repo}'"));
+    }
+    let acct = account::load()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no account linked".to_string())?;
+    let client = reqwest::Client::new();
+    orchestrator::report_library_event(&client, &acct.device_token, &repo, None, "uninstalled")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One entry in My Apps' "library" section — a repo that's in this
+/// account's library (on some device) but not installed on *this* one.
+/// `device_count` is how many linked devices currently have it, so the
+/// frontend can show "on 2 other devices" the way securexe-web's dashboard
+/// already does.
+#[derive(Serialize)]
+struct AccountLibraryEntry {
+    repo: String,
+    slug: String,
+    icon_url: String,
+    device_count: usize,
+}
+
+/// Lists the account-wide library (`GET /library`), minus whatever's
+/// already installed on this device — those show in My Apps' Installed
+/// section instead, from purely local data. Returns an empty list (not an
+/// error) when no account is linked, since that's a legitimate "nothing to
+/// show" rather than a failure; a real fetch failure (today: every call,
+/// since `/library` doesn't accept a device token yet — see
+/// `orchestrator::fetch_account_library`) is left as `Err` so the frontend
+/// can say so honestly instead of silently rendering an empty section.
+#[tauri::command]
+async fn list_account_library() -> Result<Vec<AccountLibraryEntry>, String> {
+    let Some(acct) = account::load().map_err(|e| e.to_string())? else {
+        return Ok(Vec::new());
+    };
+    let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
+    let items = orchestrator::fetch_account_library(&client, &acct.device_token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let installed_locally: HashSet<String> =
+        library::load().map_err(|e| e.to_string())?.into_iter().map(|e| e.repo).collect();
+
+    let mut device_counts: HashMap<String, usize> = HashMap::new();
+    for item in &items {
+        *device_counts.entry(item.repo.clone()).or_insert(0) += 1;
+    }
+
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for item in items {
+        if installed_locally.contains(&item.repo) || !seen.insert(item.repo.clone()) {
+            continue;
+        }
+        out.push(AccountLibraryEntry {
+            slug: item.repo.replacen('/', "__", 1),
+            icon_url: orchestrator::icon_url(&item.repo),
+            device_count: device_counts[&item.repo],
+            repo: item.repo,
+        });
+    }
+    Ok(out)
 }
 
 /// Installs (and launches) a Browse-tab tile — reuses the exact same
@@ -465,6 +543,8 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             list_library,
+            list_account_library,
+            remove_from_account,
             browse_catalog,
             install_from_catalog,
             backfill_icons,

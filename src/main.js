@@ -1,9 +1,14 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
-const galleryEl = document.querySelector("#gallery");
-const emptyStateEl = document.querySelector("#empty-state");
-const myAppsEmptyStateEl = document.querySelector("#my-apps-empty-state");
+const myAppsViewEl = document.querySelector("#my-apps-view");
+const installedGalleryEl = document.querySelector("#installed-gallery");
+const installedEmptyStateEl = document.querySelector("#installed-empty-state");
+const libraryGalleryEl = document.querySelector("#library-gallery");
+const libraryNoteEl = document.querySelector("#library-note");
+const browseViewEl = document.querySelector("#browse-view");
+const browseGalleryEl = document.querySelector("#browse-gallery");
+const browseEmptyStateEl = document.querySelector("#browse-empty-state");
 const tabBtnEls = document.querySelectorAll(".tab-btn");
 const searchInputEl = document.querySelector("#search-input");
 const bannerEl = document.querySelector("#status-banner");
@@ -41,14 +46,20 @@ const DEFAULT_ICON =
 
 // ---- tabs + search --------------------------------------------------------
 
-let activeTab = "installed"; // "installed" | "my-apps" | "browse"
+let activeTab = "my-apps"; // "my-apps" | "browse"
 let searchQuery = "";
 let searchDebounceTimer = null;
 
 // Cached results so switching tabs or re-filtering doesn't require a fresh
 // fetch every time — only the thing that actually changed (a new search
 // query on Browse, a fresh install/uninstall on Installed) re-fetches.
+// My Apps has two independent sources: `installedEntries` (this device's
+// disk state — always available) and `libraryEntries` (the account's
+// library minus whatever's already installed here — currently blocked,
+// see refreshAccountLibrary below).
 let installedEntries = [];
+let libraryEntries = [];
+let libraryError = null;
 let browseEntries = [];
 
 function matchesQuery(repo) {
@@ -81,19 +92,12 @@ searchInputEl.addEventListener("input", () => {
 // refresh (install/uninstall/relaunch) funnels through, so each of those
 // only has to worry about updating its own cached list, not the DOM.
 function renderActiveTab() {
-  emptyStateEl.classList.add("hidden");
-  myAppsEmptyStateEl.classList.add("hidden");
-  galleryEl.classList.remove("hidden");
-
-  if (activeTab === "installed") {
-    renderGallery(installedEntries.filter((e) => matchesQuery(e.repo)));
-    return;
-  }
+  myAppsViewEl.classList.toggle("hidden", activeTab !== "my-apps");
+  browseViewEl.classList.toggle("hidden", activeTab !== "browse");
 
   if (activeTab === "my-apps") {
-    galleryEl.innerHTML = "";
-    galleryEl.classList.add("hidden");
-    myAppsEmptyStateEl.classList.remove("hidden");
+    renderInstalled(installedEntries.filter((e) => matchesQuery(e.repo)));
+    renderLibrary(libraryEntries.filter((e) => matchesQuery(e.repo)));
     return;
   }
 
@@ -113,6 +117,29 @@ async function fetchAndRenderBrowse() {
   if (activeTab === "browse") renderBrowse(browseEntries);
 }
 
+// The account-wide half of My Apps — everything in this account's library
+// that isn't already sitting in `installedEntries`. Fetched separately from
+// `refreshGallery`'s local `list_library` call (not blocking it) since this
+// one talks to the worker and can fail — as of this writing it always does,
+// because `GET /library` only accepts a session token today and the
+// launcher only ever holds a device token (see `list_account_library` in
+// lib.rs). `libraryError` carries that forward so `renderLibrary` can say
+// so plainly instead of quietly rendering an empty section that looks like
+// "you have nothing else," which isn't what's actually happening.
+async function refreshAccountLibrary() {
+  try {
+    libraryEntries = await invoke("list_account_library");
+    libraryError = null;
+  } catch (e) {
+    console.error("list_account_library failed", e);
+    libraryEntries = [];
+    libraryError = String(e);
+  }
+  if (activeTab === "my-apps") {
+    renderLibrary(libraryEntries.filter((e) => matchesQuery(e.repo)));
+  }
+}
+
 // Slugs check_updates last reported as having a newer build available.
 // Populated asynchronously after the gallery itself renders — updates
 // shouldn't block getting tiles on screen — and re-checked whenever the
@@ -120,8 +147,8 @@ async function fetchAndRenderBrowse() {
 // than left running.
 let updatable = new Set();
 
-function applyUpdateBadges() {
-  for (const tile of galleryEl.querySelectorAll(".app-tile")) {
+function applyUpdateBadges(container) {
+  for (const tile of container.querySelectorAll(".app-tile")) {
     tile.classList.toggle("has-update", updatable.has(tile.dataset.slug));
   }
 }
@@ -265,11 +292,42 @@ function makeMenuItem({ className, label, confirmLabel, onActivate }) {
   return item;
 }
 
-function showContextMenu(x, y, entry) {
+// `kind` picks which actions apply — they key off different identifiers
+// and hit different commands:
+// - "installed": a tile actually on this device (Installed section, or a
+//   Browse tile that happens to be installed). Uninstall/Remove both key
+//   off `slug` and touch local state + report to the backend.
+// - "library": a My Apps library-section tile — in the account's library,
+//   but not on this device, so there's no local `slug`/library.json entry
+//   to act on. Remove is a pure backend call keyed off `repo` instead (see
+//   `remove_from_account` in lib.rs).
+function showContextMenu(x, y, entry, kind) {
   closeMenu();
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
+
+  if (kind === "library") {
+    menu.appendChild(
+      makeMenuItem({
+        className: "context-menu-item",
+        label: "Remove from library",
+        confirmLabel: "Click again to remove",
+        onActivate: async () => {
+          try {
+            await invoke("remove_from_account", { repo: entry.repo });
+            libraryEntries = libraryEntries.filter((e) => e.repo !== entry.repo);
+            renderActiveTab();
+          } catch (err) {
+            console.error("remove from account failed", err);
+          }
+        },
+      })
+    );
+    document.body.appendChild(menu);
+    positionAndOpenMenu(menu, x, y);
+    return;
+  }
 
   // Most prominent thing in the menu, and the only reason this menu might
   // open with something already "armed" to draw the eye — everything else
@@ -287,7 +345,8 @@ function showContextMenu(x, y, entry) {
           // clears the badge immediately rather than waiting on that
           // round-trip.
           updatable.delete(entry.slug);
-          applyUpdateBadges();
+          applyUpdateBadges(installedGalleryEl);
+          applyUpdateBadges(browseGalleryEl);
         } catch (err) {
           console.error("update failed", err);
         }
@@ -330,7 +389,10 @@ function showContextMenu(x, y, entry) {
   );
 
   document.body.appendChild(menu);
+  positionAndOpenMenu(menu, x, y);
+}
 
+function positionAndOpenMenu(menu, x, y) {
   const rect = menu.getBoundingClientRect();
   const left = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4));
   const top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4));
@@ -348,10 +410,75 @@ function showContextMenu(x, y, entry) {
 
 // ---- gallery ------------------------------------------------------------
 
-function renderGallery(entries) {
-  galleryEl.innerHTML = "";
-  emptyStateEl.classList.toggle("hidden", entries.length > 0);
-  emptyStateEl.textContent = searchQuery
+// Builds one tile shared by all three sections (Installed, My Apps'
+// library section, Browse) — they only differ in where the icon comes
+// from, what a click does, and which optional decorations apply, not in
+// the tile's basic shape.
+//
+// `action` returns the invoke() promise for the click; a double-click
+// fires two separate DOM click events, not one, and a local relaunch can
+// resolve in single-digit milliseconds — well before a real double-click's
+// second click event even arrives (~150-300ms later) — so disabling only
+// for the invoke's own duration doesn't catch it. Holding the tile disabled
+// for a fixed cooldown instead collapses a single click and a double-click
+// into exactly one action regardless of how fast it finishes.
+function makeAppTile(entry, { iconSrc, action, actionLabel, showInstallBadge, contextMenuKind, disabled, disabledTitle, sublabel }) {
+  const tile = document.createElement("button");
+  tile.className = "app-tile";
+  tile.title = disabled ? disabledTitle : entry.repo;
+  tile.dataset.slug = entry.slug;
+  tile.disabled = !!disabled;
+
+  const img = document.createElement("img");
+  img.src = iconSrc ?? DEFAULT_ICON;
+  img.alt = "";
+
+  const label = document.createElement("span");
+  label.className = "app-tile-label";
+  label.textContent = entry.repo.split("/").pop();
+
+  const updateBadge = document.createElement("span");
+  updateBadge.className = "app-tile-update-badge";
+  updateBadge.title = "Update available";
+
+  tile.append(img, updateBadge, label);
+
+  if (sublabel) {
+    const sub = document.createElement("span");
+    sub.className = "app-tile-sublabel";
+    sub.textContent = sublabel;
+    tile.appendChild(sub);
+  }
+
+  if (showInstallBadge) {
+    const badge = document.createElement("span");
+    badge.className = "app-tile-install-badge";
+    badge.textContent = "Install";
+    tile.appendChild(badge);
+  }
+
+  if (contextMenuKind) {
+    tile.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, entry, contextMenuKind);
+    });
+  }
+
+  tile.addEventListener("click", async () => {
+    if (tile.disabled) return;
+    tile.disabled = true;
+    const settled = action().catch((e) => console.error(`${actionLabel} failed`, e));
+    await Promise.all([settled, new Promise((resolve) => setTimeout(resolve, 600))]);
+    tile.disabled = !!disabled;
+  });
+
+  return tile;
+}
+
+function renderInstalled(entries) {
+  installedGalleryEl.innerHTML = "";
+  installedEmptyStateEl.classList.toggle("hidden", entries.length > 0);
+  installedEmptyStateEl.textContent = searchQuery
     ? `No installed apps match "${searchQuery}".`
     : "No apps yet — click Download on a project on the site to get started.";
 
@@ -362,50 +489,51 @@ function renderGallery(entries) {
   });
 
   for (const entry of sorted) {
-    const tile = document.createElement("button");
-    tile.className = "app-tile";
-    tile.title = entry.repo;
-    tile.dataset.slug = entry.slug;
-
-    const img = document.createElement("img");
-    img.src = entry.icon_data_url ?? DEFAULT_ICON;
-    img.alt = "";
-
-    const label = document.createElement("span");
-    label.className = "app-tile-label";
-    label.textContent = entry.repo.split("/").pop();
-
-    const badge = document.createElement("span");
-    badge.className = "app-tile-update-badge";
-    badge.title = "Update available";
-
-    tile.append(img, badge, label);
-
-    tile.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      showContextMenu(e.clientX, e.clientY, entry);
-    });
-
-    tile.addEventListener("click", async () => {
-      // A double-click fires two separate DOM click events, not one. A
-      // local relaunch resolves in single-digit milliseconds, well before
-      // a real double-click's second click event even arrives (~150-300ms
-      // later) — so disabling only for the invoke's own duration doesn't
-      // catch it. Hold the tile disabled for a fixed cooldown instead, so
-      // a single click and a double-click both collapse into exactly one
-      // launch regardless of how fast relaunch itself finishes.
-      if (tile.disabled) return;
-      tile.disabled = true;
-      const launch = invoke("relaunch", { slug: entry.slug }).catch((e) => {
-        console.error("relaunch failed", e);
-      });
-      await Promise.all([launch, new Promise((resolve) => setTimeout(resolve, 600))]);
-      tile.disabled = false;
-    });
-    galleryEl.appendChild(tile);
+    installedGalleryEl.appendChild(
+      makeAppTile(entry, {
+        iconSrc: entry.icon_data_url,
+        action: () => invoke("relaunch", { slug: entry.slug }),
+        actionLabel: "relaunch",
+        contextMenuKind: "installed",
+      })
+    );
   }
 
-  applyUpdateBadges();
+  applyUpdateBadges(installedGalleryEl);
+}
+
+// The rest of this account's library — repos added to it (on this device
+// or another) that aren't installed here. Not the same list as Installed:
+// this is what `list_account_library` returns after excluding whatever's
+// already local (see lib.rs). Every tile here is a click-to-install, same
+// as a not-yet-installed Browse tile.
+function renderLibrary(entries) {
+  libraryGalleryEl.innerHTML = "";
+
+  if (libraryError) {
+    libraryNoteEl.textContent = "Couldn't load your account library right now.";
+    libraryNoteEl.classList.remove("hidden");
+  } else if (entries.length === 0) {
+    libraryNoteEl.textContent = searchQuery
+      ? `No other library apps match "${searchQuery}".`
+      : "Nothing else — everything in your library is already installed here.";
+    libraryNoteEl.classList.remove("hidden");
+  } else {
+    libraryNoteEl.classList.add("hidden");
+  }
+
+  for (const entry of entries) {
+    libraryGalleryEl.appendChild(
+      makeAppTile(entry, {
+        iconSrc: entry.icon_url,
+        action: () => invoke("install_from_catalog", { repo: entry.repo }),
+        actionLabel: "install",
+        showInstallBadge: true,
+        contextMenuKind: "library",
+        sublabel: entry.device_count > 1 ? `On ${entry.device_count} devices` : null,
+      })
+    );
+  }
 }
 
 // Browse-tab tiles come from the public catalog (`browse_catalog`, backed
@@ -416,67 +544,32 @@ function renderGallery(entries) {
 // in lib.rs for why: no reason to fetch/cache an icon for every catalog
 // entry when the worker already serves it directly).
 function renderBrowse(entries) {
-  galleryEl.innerHTML = "";
-  emptyStateEl.classList.toggle("hidden", entries.length > 0);
-  emptyStateEl.textContent = searchQuery
+  browseGalleryEl.innerHTML = "";
+  browseEmptyStateEl.classList.toggle("hidden", entries.length > 0);
+  browseEmptyStateEl.textContent = searchQuery
     ? `No catalog results for "${searchQuery}".`
     : "The catalog is empty.";
 
   for (const entry of entries) {
-    const tile = document.createElement("button");
-    tile.className = "app-tile app-tile-browse";
-    tile.title = entry.available ? entry.repo : `${entry.repo} — not built for this platform yet`;
-    tile.dataset.slug = entry.slug;
-    tile.disabled = !entry.available;
-
-    const img = document.createElement("img");
-    img.src = entry.icon_url ?? DEFAULT_ICON;
-    img.alt = "";
-
-    const label = document.createElement("span");
-    label.className = "app-tile-label";
-    label.textContent = entry.repo.split("/").pop();
-
-    const updateBadge = document.createElement("span");
-    updateBadge.className = "app-tile-update-badge";
-    updateBadge.title = "Update available";
-
-    tile.append(img, updateBadge, label);
-
-    if (!entry.installed && entry.available) {
-      const badge = document.createElement("span");
-      badge.className = "app-tile-install-badge";
-      badge.textContent = "Install";
-      tile.appendChild(badge);
-    }
-
-    // Uninstall/Remove only make sense for a tile that's actually on this
-    // device — same context menu the Installed tab uses, since CatalogEntry
-    // carries the same slug/repo shape showContextMenu already reads.
-    if (entry.installed) {
-      tile.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        showContextMenu(e.clientX, e.clientY, entry);
-      });
-    }
-
-    tile.addEventListener("click", async () => {
-      if (tile.disabled) return;
-      tile.disabled = true;
-      const action = entry.installed
-        ? invoke("relaunch", { slug: entry.slug })
-        : invoke("install_from_catalog", { repo: entry.repo });
-      const settled = action.catch((e) => {
-        console.error(entry.installed ? "relaunch failed" : "install failed", e);
-      });
-      await Promise.all([settled, new Promise((resolve) => setTimeout(resolve, 600))]);
-      tile.disabled = false;
-    });
-
-    galleryEl.appendChild(tile);
+    browseGalleryEl.appendChild(
+      makeAppTile(entry, {
+        iconSrc: entry.icon_url,
+        action: () =>
+          entry.installed ? invoke("relaunch", { slug: entry.slug }) : invoke("install_from_catalog", { repo: entry.repo }),
+        actionLabel: entry.installed ? "relaunch" : "install",
+        showInstallBadge: !entry.installed && entry.available,
+        // Uninstall/Remove only make sense for a tile that's actually on
+        // this device — same "installed" context menu the Installed
+        // section uses, since CatalogEntry carries the same slug/repo
+        // shape showContextMenu already reads.
+        contextMenuKind: entry.installed ? "installed" : null,
+        disabled: !entry.available,
+        disabledTitle: `${entry.repo} — not built for this platform yet`,
+      })
+    );
   }
 
-  applyUpdateBadges();
+  applyUpdateBadges(browseGalleryEl);
 }
 
 // Fetches the worker's generated icon (same one securexe-web's catalog
@@ -497,7 +590,7 @@ async function backfillIcons() {
       const entry = installedEntries.find((e) => e.slug === slug);
       if (entry) entry.icon_data_url = icon_data_url;
 
-      const img = galleryEl.querySelector(`.app-tile[data-slug="${CSS.escape(slug)}"] img`);
+      const img = installedGalleryEl.querySelector(`.app-tile[data-slug="${CSS.escape(slug)}"] img`);
       if (img) img.src = icon_data_url;
     }
   } catch (e) {
@@ -515,6 +608,7 @@ async function refreshGallery() {
   renderActiveTab();
   checkUpdates();
   backfillIcons();
+  refreshAccountLibrary();
 }
 
 // Linking only ever happens by receiving a `securexe://link` deep link from

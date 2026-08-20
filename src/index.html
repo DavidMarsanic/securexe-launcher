@@ -31,22 +31,29 @@
       </div>
 
       <div class="tab-bar" role="tablist">
-        <button type="button" class="tab-btn active" data-tab="installed" role="tab" aria-selected="true">Installed</button>
-        <button type="button" class="tab-btn" data-tab="my-apps" role="tab" aria-selected="false">My Apps</button>
+        <button type="button" class="tab-btn active" data-tab="my-apps" role="tab" aria-selected="true">My Apps</button>
         <button type="button" class="tab-btn" data-tab="browse" role="tab" aria-selected="false">Browse</button>
       </div>
 
       <input id="search-input" class="search-input" type="search" placeholder="Search" />
 
-      <p id="empty-state" class="empty-state">
-        No apps yet — click Download on a project on the site to get started.
-      </p>
+      <div id="my-apps-view">
+        <p id="installed-empty-state" class="empty-state hidden">
+          No apps yet — click Download on a project on the site to get started.
+        </p>
+        <div id="installed-gallery" class="gallery"></div>
 
-      <p id="my-apps-empty-state" class="empty-state hidden">
-        My Apps needs your account synced across devices — coming soon.
-      </p>
+        <hr class="section-divider" />
 
-      <div id="gallery" class="gallery"></div>
+        <h2 class="section-heading">In your library</h2>
+        <p id="library-note" class="section-note hidden"></p>
+        <div id="library-gallery" class="gallery"></div>
+      </div>
+
+      <div id="browse-view" class="hidden">
+        <p id="browse-empty-state" class="empty-state hidden"></p>
+        <div id="browse-gallery" class="gallery"></div>
+      </div>
     </main>
   </body>
 </html>

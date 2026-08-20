@@ -225,6 +225,63 @@ pub async fn fetch_updates(
     Ok(parsed.updates)
 }
 
+/// The worker's icon URL for `repo` — same endpoint `fetch_icon_svg` below
+/// downloads, but as a plain URL string for callers (My Apps' library
+/// section) that just want the webview to load it directly via `<img>`,
+/// the same way Browse tiles already use `SearchResult::icon_url` without
+/// an extra fetch/cache round-trip.
+pub fn icon_url(repo: &str) -> String {
+    format!("{ORCHESTRATOR_BASE}/icon?repo={}", urlencoding_component(repo))
+}
+
+/// One record from the worker's account-wide library — `GET /library`,
+/// the source of truth for "everything in my account", independent of
+/// whether it's installed on *this* device. The response also carries
+/// `commit`/`deviceId`/`installedAt` per record (see `lib/devices.ts`'s
+/// `LibraryItem` on the website), but My Apps' library section only needs
+/// the repo — one record per device means counting how many share a repo
+/// already gives the right device count without reading `deviceId` itself.
+#[derive(Debug, Deserialize)]
+pub struct LibraryItem {
+    pub repo: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LibraryResponse {
+    #[serde(default)]
+    items: Vec<LibraryItem>,
+}
+
+/// Fetches this account's library across every linked device. Bearer-authed
+/// with the device token — as of this writing `GET /library` only actually
+/// accepts a *session* token (the one securexe-web's own dashboard uses),
+/// so this currently 401s for the launcher; it's written against the
+/// intended contract (same shape `lib/devices.ts`'s `getLibrary` reads) so
+/// My Apps starts working the moment the worker accepts device tokens here
+/// too, with no further launcher-side change.
+pub async fn fetch_account_library(
+    client: &reqwest::Client,
+    device_token: &str,
+) -> Result<Vec<LibraryItem>, LauncherError> {
+    let resp = client
+        .get(format!("{ORCHESTRATOR_BASE}/library"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "library request failed: {}",
+            resp.status()
+        )));
+    }
+
+    let parsed: LibraryResponse = resp
+        .json()
+        .await
+        .map_err(|e| LauncherError::Network(format!("bad library response: {e}")))?;
+    Ok(parsed.items)
+}
+
 /// Fetches the worker's generated icon for `repo` ("owner/repo") — an
 /// always-available SVG badge (deterministic gradient + initials, and a
 /// real uploaded icon instead when the worker has one on record) served at
@@ -235,7 +292,7 @@ pub async fn fetch_updates(
 /// identical icons for the same app, rather than two different guesses at
 /// the same thing.
 pub async fn fetch_icon_svg(client: &reqwest::Client, repo: &str) -> Result<Vec<u8>, LauncherError> {
-    let url = format!("{ORCHESTRATOR_BASE}/icon?repo={}", urlencoding_component(repo));
+    let url = icon_url(repo);
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
         return Err(LauncherError::Network(format!(

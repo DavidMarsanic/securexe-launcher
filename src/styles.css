@@ -24,6 +24,10 @@
   box-sizing: border-box;
 }
 
+.hidden {
+  display: none;
+}
+
 body {
   margin: 0;
 }
@@ -163,6 +167,41 @@ body {
 
 .gallery.hidden {
   display: none;
+}
+
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  margin: 20px 0 8px;
+}
+
+.section-heading {
+  margin: 0 0 8px;
+  font-size: 0.8em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.section-note {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.section-note.hidden {
+  display: none;
+}
+
+.app-tile-sublabel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 0.72em;
+  color: var(--muted);
 }
 
 .app-tile {
