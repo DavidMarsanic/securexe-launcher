@@ -28,6 +28,15 @@ pub fn icon_path(slug: &str) -> Result<PathBuf, LauncherError> {
     Ok(securexe_home()?.join("icons").join(format!("{slug}.png")))
 }
 
+/// `~/.securexe/icons/<slug>.svg` — the worker's generated icon (see
+/// `orchestrator::fetch_icon_svg`), cached alongside `icon_path`'s PNG.
+/// Kept as a separate file/extension rather than converted to PNG: it's
+/// already a small, webview-renderable SVG, so rasterizing it would just
+/// be extra work (and an extra `sips`/platform dependency) for no benefit.
+pub fn worker_icon_path(slug: &str) -> Result<PathBuf, LauncherError> {
+    Ok(securexe_home()?.join("icons").join(format!("{slug}.svg")))
+}
+
 /// `~/.securexe/sandbox/<slug>/` — the working directory a launched app
 /// runs in. Never the user's real `$HOME` or wherever the launcher process
 /// itself happened to start: a CLI tool that treats "current directory" as
@@ -63,9 +72,10 @@ pub fn remove_all(slug: &str) -> Result<(), LauncherError> {
             std::fs::remove_dir_all(&path)?;
         }
     }
-    let icon = icon_path(slug)?;
-    if icon.is_file() {
-        std::fs::remove_file(&icon)?;
+    for icon in [icon_path(slug)?, worker_icon_path(slug)?] {
+        if icon.is_file() {
+            std::fs::remove_file(&icon)?;
+        }
     }
     Ok(())
 }

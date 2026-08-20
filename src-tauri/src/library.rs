@@ -104,6 +104,20 @@ pub fn find(slug: &str) -> Result<Option<LibraryEntry>, LauncherError> {
     Ok(load()?.into_iter().find(|e| e.slug == slug))
 }
 
+/// Fills in `icon` for an entry that was installed before it had one
+/// cached (or whose bundle/worker icon fetch failed at install time and is
+/// now being backfilled) — see `backfill_icons` in lib.rs. No-op if `slug`
+/// isn't in the library or already has an icon; callers only pass entries
+/// they've already confirmed are missing one.
+pub fn set_icon(slug: &str, icon: PathBuf) -> Result<(), LauncherError> {
+    let mut entries = load()?;
+    if let Some(existing) = entries.iter_mut().find(|e| e.slug == slug) {
+        existing.icon = Some(icon);
+        save(&entries)?;
+    }
+    Ok(())
+}
+
 pub fn touch_last_launched(slug: &str) -> Result<(), LauncherError> {
     let mut entries = load()?;
     if let Some(existing) = entries.iter_mut().find(|e| e.slug == slug) {

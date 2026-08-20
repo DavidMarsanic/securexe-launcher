@@ -36,8 +36,19 @@ struct GalleryEntry {
 
 impl From<library::LibraryEntry> for GalleryEntry {
     fn from(e: library::LibraryEntry) -> Self {
-        let icon_data_url = e.icon.and_then(|path| std::fs::read(path).ok()).map(|bytes| {
-            format!("data:image/png;base64,{}", STANDARD.encode(bytes))
+        let icon_data_url = e.icon.and_then(|path| {
+            // Two possible sources land here: a bundle's own `.icns`,
+            // always converted to PNG by bundle::extract_icon, or the
+            // worker's generated badge, cached as-is at
+            // install::worker_icon_path — already an SVG, so no conversion
+            // step for that one. The extension is what tells them apart.
+            let mime = if path.extension().and_then(|e| e.to_str()) == Some("svg") {
+                "image/svg+xml"
+            } else {
+                "image/png"
+            };
+            let bytes = std::fs::read(&path).ok()?;
+            Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
         });
         GalleryEntry {
             slug: e.slug,
@@ -55,6 +66,46 @@ fn list_library() -> Result<Vec<GalleryEntry>, String> {
     library::load()
         .map(|entries| entries.into_iter().map(GalleryEntry::from).collect())
         .map_err(|e| e.to_string())
+}
+
+/// One app whose icon was just fetched from the worker and cached — all
+/// `backfill_icons` returns, since the frontend only needs to patch the
+/// tiles that actually changed, not a full re-describe of the library.
+#[derive(Serialize)]
+struct BackfilledIcon {
+    slug: String,
+    icon_data_url: String,
+}
+
+/// Fetches and caches the worker's generated icon (see
+/// `orchestrator::fetch_icon_svg`) for every installed app that doesn't
+/// have one cached yet — apps installed before this existed, or whose
+/// install-time fetch failed (offline, worker hiccup). Called once after
+/// the gallery's initial paint from `list_library` (see main.js), not
+/// folded into that command itself, so a slow/offline network never
+/// delays getting tiles on screen — same reasoning as `check_updates`
+/// running after the fact rather than blocking. Concurrent per app for the
+/// same reason `check_updates` is: a library of a dozen+ apps shouldn't
+/// backfill one at a time.
+#[tauri::command]
+async fn backfill_icons() -> Result<Vec<BackfilledIcon>, String> {
+    let entries = library::load().map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
+
+    let fetches = entries.into_iter().filter(|e| e.icon.is_none()).map(|entry| {
+        let client = client.clone();
+        async move {
+            let path = flow::fetch_and_cache_worker_icon(&client, &entry.repo, &entry.slug).await?;
+            library::set_icon(&entry.slug, path.clone()).ok()?;
+            let bytes = tokio::fs::read(&path).await.ok()?;
+            Some(BackfilledIcon {
+                slug: entry.slug,
+                icon_data_url: format!("data:image/svg+xml;base64,{}", STANDARD.encode(bytes)),
+            })
+        }
+    });
+
+    Ok(futures_util::future::join_all(fetches).await.into_iter().flatten().collect())
 }
 
 /// Re-runs an already-downloaded, already-checksum-verified app straight
@@ -341,6 +392,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             list_library,
+            backfill_icons,
             relaunch,
             uninstall,
             remove_from_library,

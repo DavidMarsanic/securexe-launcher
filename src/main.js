@@ -328,6 +328,24 @@ function renderGallery(entries) {
   applyUpdateBadges();
 }
 
+// Fetches the worker's generated icon (same one securexe-web's catalog
+// shows via iconUrl) for any tile that's still on the generic placeholder
+// — apps installed before this existed, or whose install-time fetch
+// failed. Runs after the gallery's initial paint so a slow/offline
+// network never delays getting tiles on screen, same reasoning as
+// checkUpdates below.
+async function backfillIcons() {
+  try {
+    const filled = await invoke("backfill_icons");
+    for (const { slug, icon_data_url } of filled) {
+      const img = galleryEl.querySelector(`.app-tile[data-slug="${CSS.escape(slug)}"] img`);
+      if (img) img.src = icon_data_url;
+    }
+  } catch (e) {
+    console.error("backfill_icons failed", e);
+  }
+}
+
 async function refreshGallery() {
   try {
     const entries = await invoke("list_library");
@@ -336,6 +354,7 @@ async function refreshGallery() {
     console.error("failed to load library", e);
   }
   checkUpdates();
+  backfillIcons();
 }
 
 // Linking only ever happens by receiving a `securexe://link` deep link from

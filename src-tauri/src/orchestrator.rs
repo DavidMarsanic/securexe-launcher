@@ -118,6 +118,30 @@ fn urlencoding_component(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
+/// Fetches the worker's generated icon for `repo` ("owner/repo") — an
+/// always-available SVG badge (deterministic gradient + initials, and a
+/// real uploaded icon instead when the worker has one on record) served at
+/// `GET /icon?repo=<repo>` regardless of whether the repo ships its own
+/// `.icns`. This is the exact same `iconUrl` securexe-web's catalog uses
+/// (see its `RepoIcon` component) — fetching it here instead of generating
+/// our own fallback badge keeps the launcher and the website showing
+/// identical icons for the same app, rather than two different guesses at
+/// the same thing.
+pub async fn fetch_icon_svg(client: &reqwest::Client, repo: &str) -> Result<Vec<u8>, LauncherError> {
+    let url = format!("{ORCHESTRATOR_BASE}/icon?repo={}", urlencoding_component(repo));
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "icon request failed: {}",
+            resp.status()
+        )));
+    }
+    resp.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| LauncherError::Network(format!("bad icon response: {e}")))
+}
+
 #[derive(Debug, Deserialize)]
 struct DeviceLinkResponse {
     status: String,
@@ -234,4 +258,26 @@ pub async fn unlink_device(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs against the real, live worker (same convention as
+    /// self_update's tests hitting the real GitHub Releases API) rather
+    /// than a mock — the thing actually worth verifying is that this repo
+    /// really does get back a renderable SVG icon from the real endpoint,
+    /// not just that our own request-building code compiles.
+    #[tokio::test]
+    async fn fetch_icon_svg_returns_a_real_svg() {
+        let client = reqwest::Client::new();
+        let bytes = fetch_icon_svg(&client, "DavidMarsanic/pdf-toolkit")
+            .await
+            .expect("fetch_icon_svg failed");
+
+        let svg = String::from_utf8(bytes).expect("icon response wasn't valid UTF-8");
+        assert!(svg.contains("<svg"), "response doesn't look like an SVG: {svg}");
+        assert!(svg.contains("</svg>"), "response doesn't look like a complete SVG: {svg}");
+    }
 }

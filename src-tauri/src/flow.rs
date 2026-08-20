@@ -125,7 +125,7 @@ pub async fn install_and_launch(
     };
 
     let is_gui = run::is_gui(&resolved.executable);
-    let icon = if let Some(app_bundle) = &resolved.app_bundle {
+    let bundle_icon = if let Some(app_bundle) = &resolved.app_bundle {
         let dest_png = install::icon_path(&slug)?;
         let app_bundle = app_bundle.clone();
         tokio::task::spawn_blocking(move || bundle::extract_icon(&app_bundle, &dest_png))
@@ -133,6 +133,14 @@ pub async fn install_and_launch(
             .unwrap_or(None)
     } else {
         None
+    };
+    // Most repos don't ship their own `.icns` — same as the website, which
+    // shows a worker-generated badge for any repo without a real uploaded
+    // icon (see orchestrator::fetch_icon_svg). Only hit the network for
+    // this when the local bundle genuinely had nothing to extract.
+    let icon = match bundle_icon {
+        Some(path) => Some(path),
+        None => fetch_and_cache_worker_icon(&client, &repo_path, &slug).await,
     };
     let existing_entry = library::find(&slug)?;
     let previous_commit =
@@ -172,6 +180,26 @@ pub async fn install_and_launch(
 
     emit(app, StatusEvent::Done { repo: repo_path });
     Ok(())
+}
+
+/// Fetches the worker's generated icon for `repo_path` and caches it at
+/// `install::worker_icon_path(slug)`. Best-effort, same as
+/// `bundle::extract_icon`: an icon is cosmetic, so a network hiccup here
+/// just means the gallery falls back to its generic glyph rather than
+/// failing the install. Shared by `install_and_launch` (fresh installs)
+/// and `backfill_icons` (already-installed apps that predate this).
+pub async fn fetch_and_cache_worker_icon(
+    client: &reqwest::Client,
+    repo_path: &str,
+    slug: &str,
+) -> Option<std::path::PathBuf> {
+    let dest_svg = install::worker_icon_path(slug).ok()?;
+    let bytes = orchestrator::fetch_icon_svg(client, repo_path).await.ok()?;
+    if let Some(parent) = dest_svg.parent() {
+        tokio::fs::create_dir_all(parent).await.ok()?;
+    }
+    tokio::fs::write(&dest_svg, &bytes).await.ok()?;
+    Some(dest_svg)
 }
 
 /// The last path segment of a `owner/repo` string — matches exactly what
