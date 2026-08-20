@@ -231,14 +231,35 @@ async fn check_launcher_update(app: tauri::AppHandle) -> Result<Option<self_upda
     self_update::check(&current).await.map_err(|e| e.to_string())
 }
 
-/// Opens `url` in the system's default browser — used by the launcher-
-/// update notification's Download button. Thin wrapper so the frontend
-/// stays consistent with how every other action here goes through a
-/// named command, rather than reaching for the opener plugin's raw
-/// `plugin:opener|open_url` IPC name directly.
+/// Opens `url` in the system's default browser — used as the fallback
+/// for `install_launcher_update` on platforms without a scripted
+/// installer yet. Thin wrapper so the frontend stays consistent with how
+/// every other action here goes through a named command, rather than
+/// reaching for the opener plugin's raw `plugin:opener|open_url` IPC name
+/// directly.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Installs the update the update banner is currently showing. On macOS
+/// this runs the real thing (see self_update::update_via_terminal): a
+/// visible Terminal script downloads, installs, de-quarantines, and
+/// relaunches, with no manual drag-and-drop. Windows/Linux don't have
+/// that scripted installer yet, so they fall back to opening the release
+/// page — nothing here claims to automate a platform it doesn't actually
+/// automate.
+#[tauri::command]
+fn install_launcher_update(download_url: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = &download_url; // macOS derives the URL itself — see self_update::update_via_terminal
+        self_update::update_via_terminal().map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        tauri_plugin_opener::open_url(download_url, None::<&str>).map_err(|e| e.to_string())
+    }
 }
 
 /// Cold starts can deliver the same launch URL through both
@@ -290,7 +311,8 @@ pub fn run() {
             get_account,
             unlink,
             check_launcher_update,
-            open_url
+            open_url,
+            install_launcher_update
         ])
         .setup(|app| {
             let handle = app.handle().clone();

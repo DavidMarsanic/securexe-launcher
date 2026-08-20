@@ -80,8 +80,12 @@ async function checkLauncherUpdate() {
 
 launcherUpdateDownloadBtnEl.addEventListener("click", () => {
   if (pendingLauncherDownloadUrl) {
-    invoke("open_url", { url: pendingLauncherDownloadUrl }).catch((e) => {
-      console.error("open_url failed", e);
+    launcherUpdateDownloadBtnEl.disabled = true;
+    launcherUpdateTextEl.textContent = "Updating — check the Terminal window that just opened…";
+    invoke("install_launcher_update", { downloadUrl: pendingLauncherDownloadUrl }).catch((e) => {
+      console.error("install_launcher_update failed", e);
+      launcherUpdateDownloadBtnEl.disabled = false;
+      launcherUpdateTextEl.textContent = `Update failed: ${e}`;
     });
   }
 });
