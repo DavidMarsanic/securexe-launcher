@@ -82,6 +82,26 @@ body {
   color: var(--muted);
 }
 
+.launcher-update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--accent, #3b6bf6);
+  font-size: 0.9em;
+}
+
+.launcher-update-banner.hidden {
+  display: none;
+}
+
+.launcher-update-banner .unlink-btn {
+  color: var(--accent, #3b6bf6);
+  font-weight: 600;
+}
+
 .empty-state {
   margin: auto;
   color: var(--muted);

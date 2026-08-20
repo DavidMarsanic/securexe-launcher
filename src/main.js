@@ -9,6 +9,9 @@ const bannerTextEl = document.querySelector("#status-text");
 const accountBarEl = document.querySelector("#account-bar");
 const accountLabelEl = document.querySelector("#account-label");
 const unlinkBtnEl = document.querySelector("#unlink-btn");
+const launcherUpdateBannerEl = document.querySelector("#launcher-update-banner");
+const launcherUpdateTextEl = document.querySelector("#launcher-update-text");
+const launcherUpdateDownloadBtnEl = document.querySelector("#launcher-update-download-btn");
 
 const STEP_LABEL = {
   resolving: "Resolving…",
@@ -52,6 +55,36 @@ async function checkUpdates() {
     console.error("check_updates failed", e);
   }
 }
+
+let pendingLauncherDownloadUrl = null;
+
+// Distinct from checkUpdates above (per-app tile badges) — this is about
+// securexe-launcher itself. Same load-and-on-focus cadence as the app
+// update check, since this window is typically opened briefly rather
+// than left running, so focus is the main signal that time has passed.
+async function checkLauncherUpdate() {
+  try {
+    const update = await invoke("check_launcher_update");
+    if (!update) {
+      launcherUpdateBannerEl.classList.add("hidden");
+      pendingLauncherDownloadUrl = null;
+      return;
+    }
+    pendingLauncherDownloadUrl = update.download_url;
+    launcherUpdateTextEl.textContent = `A new version of Securexe Launcher is available (v${update.version}).`;
+    launcherUpdateBannerEl.classList.remove("hidden");
+  } catch (e) {
+    console.error("check_launcher_update failed", e);
+  }
+}
+
+launcherUpdateDownloadBtnEl.addEventListener("click", () => {
+  if (pendingLauncherDownloadUrl) {
+    invoke("open_url", { url: pendingLauncherDownloadUrl }).catch((e) => {
+      console.error("open_url failed", e);
+    });
+  }
+});
 
 // ---- right-click context menu -----------------------------------------
 
@@ -321,6 +354,8 @@ listen("launcher-status", (event) => {
 });
 
 window.addEventListener("focus", checkUpdates);
+window.addEventListener("focus", checkLauncherUpdate);
 
 refreshGallery();
 refreshAccount();
+checkLauncherUpdate();

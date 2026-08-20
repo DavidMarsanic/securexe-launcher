@@ -35,6 +35,7 @@ rand = "0.8"
 zip = "2"
 plist = "1"
 base64 = "0.22"
+semver = "1.0.28"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -44,3 +45,6 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

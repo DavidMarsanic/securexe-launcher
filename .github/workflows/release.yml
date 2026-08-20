@@ -36,6 +36,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # tauri.conf.json/Cargo.toml both start at 0.1.0 and nothing here
+      # used to bump them — every past release actually shipped with the
+      # binary's own embedded version stuck at 0.1.0 regardless of which
+      # tag it was built from, which is why an in-app "is a newer version
+      # available" check has nothing reliable to compare against without
+      # this. tagName is the source of truth (git tag, e.g. v0.1.15); this
+      # writes that same number (minus the leading "v") into both files
+      # before the build below reads them.
+      - name: Stamp the release version into tauri.conf.json and Cargo.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          echo "Stamping version $version from tag $GITHUB_REF_NAME"
+          python3 -c "
+          import json
+          path = 'src-tauri/tauri.conf.json'
+          with open(path) as f:
+              data = json.load(f)
+          data['version'] = '$version'
+          with open(path, 'w') as f:
+              json.dump(data, f, indent=2)
+              f.write('\n')
+          "
+          sed -i.bak -E 's/^version = "[^"]*"/version = "'"$version"'"/' src-tauri/Cargo.toml
+          rm -f src-tauri/Cargo.toml.bak
+          grep -n '"version"' src-tauri/tauri.conf.json
+          grep -n '^version' src-tauri/Cargo.toml
+
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |

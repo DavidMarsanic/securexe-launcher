@@ -9,6 +9,7 @@ mod orchestrator;
 mod platform;
 mod repo;
 mod run;
+mod self_update;
 mod signature;
 mod verify;
 
@@ -217,6 +218,29 @@ async fn unlink() -> Result<(), String> {
     account::clear().map_err(|e| e.to_string())
 }
 
+/// Checks whether a newer release of securexe-launcher itself is
+/// available — separate from `check_updates` above, which is about
+/// installed *applets*. `app.package_info().version` is stamped from the
+/// release tag at build time (see release.yml); a locally-built dev
+/// binary reports whatever Cargo.toml says (0.1.0, never bumped in the
+/// repo itself), which self_update::check treats as "not ahead of any
+/// real release" rather than erroring.
+#[tauri::command]
+async fn check_launcher_update(app: tauri::AppHandle) -> Result<Option<self_update::LauncherUpdate>, String> {
+    let current = app.package_info().version.to_string();
+    self_update::check(&current).await.map_err(|e| e.to_string())
+}
+
+/// Opens `url` in the system's default browser — used by the launcher-
+/// update notification's Download button. Thin wrapper so the frontend
+/// stays consistent with how every other action here goes through a
+/// named command, rather than reaching for the opener plugin's raw
+/// `plugin:opener|open_url` IPC name directly.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// Cold starts can deliver the same launch URL through both
 /// `get_current()` and the `on_open_url` listener below — a known overlap
 /// in how the OS/plugin replay the Apple Event that launched the app.
@@ -264,7 +288,9 @@ pub fn run() {
             check_updates,
             update_slug,
             get_account,
-            unlink
+            unlink,
+            check_launcher_update,
+            open_url
         ])
         .setup(|app| {
             let handle = app.handle().clone();
