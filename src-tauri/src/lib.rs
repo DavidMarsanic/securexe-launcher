@@ -77,22 +77,25 @@ struct BackfilledIcon {
     icon_data_url: String,
 }
 
-/// Fetches and caches the worker's generated icon (see
-/// `orchestrator::fetch_icon_svg`) for every installed app that doesn't
-/// have one cached yet — apps installed before this existed, or whose
-/// install-time fetch failed (offline, worker hiccup). Called once after
-/// the gallery's initial paint from `list_library` (see main.js), not
-/// folded into that command itself, so a slow/offline network never
-/// delays getting tiles on screen — same reasoning as `check_updates`
-/// running after the fact rather than blocking. Concurrent per app for the
-/// same reason `check_updates` is: a library of a dozen+ apps shouldn't
+/// Re-syncs every installed app's icon against the worker — the worker is
+/// the authoritative source (same iconUrl-or-generated-badge securexe-web's
+/// RepoIcon shows), so this re-fetches unconditionally rather than only
+/// filling in apps with nothing cached: an app installed before
+/// `flow::install_and_launch` preferred the worker icon may already have a
+/// generic bundle-extracted one cached, and that's exactly what needs
+/// correcting, not just genuinely missing icons. Called once after the
+/// gallery's initial paint from `list_library` (see main.js), not folded
+/// into that command itself, so a slow/offline network never delays
+/// getting tiles on screen — same reasoning as `check_updates` running
+/// after the fact rather than blocking. Concurrent per app for the same
+/// reason `check_updates` is: a library of a dozen+ apps shouldn't
 /// backfill one at a time.
 #[tauri::command]
 async fn backfill_icons() -> Result<Vec<BackfilledIcon>, String> {
     let entries = library::load().map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
 
-    let fetches = entries.into_iter().filter(|e| e.icon.is_none()).map(|entry| {
+    let fetches = entries.into_iter().map(|entry| {
         let client = client.clone();
         async move {
             let path = flow::fetch_and_cache_worker_icon(&client, &entry.repo, &entry.slug).await?;

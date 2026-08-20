@@ -125,22 +125,27 @@ pub async fn install_and_launch(
     };
 
     let is_gui = run::is_gui(&resolved.executable);
-    let bundle_icon = if let Some(app_bundle) = &resolved.app_bundle {
-        let dest_png = install::icon_path(&slug)?;
-        let app_bundle = app_bundle.clone();
-        tokio::task::spawn_blocking(move || bundle::extract_icon(&app_bundle, &dest_png))
-            .await
-            .unwrap_or(None)
-    } else {
-        None
-    };
-    // Most repos don't ship their own `.icns` — same as the website, which
-    // shows a worker-generated badge for any repo without a real uploaded
-    // icon (see orchestrator::fetch_icon_svg). Only hit the network for
-    // this when the local bundle genuinely had nothing to extract.
-    let icon = match bundle_icon {
+    // The worker is the authoritative source for "what icon does this repo
+    // show" — it's the exact same iconUrl-or-generated-badge securexe-web's
+    // RepoIcon renders, so preferring it here is what keeps the launcher's
+    // tile matching the website instead of showing whatever generic default
+    // icon happened to get compiled into the downloaded bundle (which is
+    // the common case — most of these repos never set a custom `.icns`).
+    // The bundle's own icon is only a fallback for when the worker itself
+    // is unreachable.
+    let icon = match fetch_and_cache_worker_icon(&client, &repo_path, &slug).await {
         Some(path) => Some(path),
-        None => fetch_and_cache_worker_icon(&client, &repo_path, &slug).await,
+        None => {
+            if let Some(app_bundle) = &resolved.app_bundle {
+                let dest_png = install::icon_path(&slug)?;
+                let app_bundle = app_bundle.clone();
+                tokio::task::spawn_blocking(move || bundle::extract_icon(&app_bundle, &dest_png))
+                    .await
+                    .unwrap_or(None)
+            } else {
+                None
+            }
+        }
     };
     let existing_entry = library::find(&slug)?;
     let previous_commit =
