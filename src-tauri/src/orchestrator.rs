@@ -118,6 +118,113 @@ fn urlencoding_component(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
+/// One catalog entry from `GET /search` — the Browse tab's data source.
+/// `icon_url` is already an absolute, ready-to-use URL (the worker's own
+/// generated-badge-or-owner-uploaded-icon precedence, same as securexe-web's
+/// catalog); unlike the installed gallery's `icon_data_url`, nothing here
+/// fetches or caches it locally, the `<img>` tag just points straight at it.
+#[derive(Debug, Deserialize)]
+pub struct SearchResult {
+    pub repo: String,
+    #[serde(rename = "iconUrl")]
+    pub icon_url: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub artifacts: Vec<Artifact>,
+}
+
+impl SearchResult {
+    pub fn artifact_for(&self, target: &str) -> Option<&Artifact> {
+        self.artifacts.iter().find(|a| {
+            a.success && format!("{}-{}", a.os, a.arch) == target
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    status: String,
+    #[serde(default)]
+    results: Vec<SearchResult>,
+}
+
+/// Fetches the public catalog (or a filtered slice of it) from the worker's
+/// `/search` endpoint — no auth, this is the same live data securexe-web's
+/// own Library page and homepage already read. `query`, when present, is
+/// forwarded as-is; the worker does the matching (repo slug, GitHub name,
+/// toolchain version, per-artifact fields) — this is not a client-side
+/// filter over a locally cached full catalog.
+pub async fn search_catalog(
+    client: &reqwest::Client,
+    query: Option<&str>,
+) -> Result<Vec<SearchResult>, LauncherError> {
+    let url = format!("{ORCHESTRATOR_BASE}/search?q={}", urlencoding_component(query.unwrap_or("")));
+
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "search request failed: {}",
+            resp.status()
+        )));
+    }
+
+    let parsed: SearchResponse = resp
+        .json()
+        .await
+        .map_err(|e| LauncherError::Network(format!("bad search response: {e}")))?;
+    if parsed.status != "ok" {
+        return Err(LauncherError::Network("unexpected search response".into()));
+    }
+    Ok(parsed.results)
+}
+
+/// One installed app with a newer build available, as reported by the
+/// worker itself rather than computed here — see `fetch_updates`.
+#[derive(Debug, Deserialize)]
+pub struct UpdateInfo {
+    pub repo: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdatesResponse {
+    status: String,
+    #[serde(default)]
+    updates: Vec<UpdateInfo>,
+}
+
+/// Asks the worker which of this device's installed apps are stale, in one
+/// call, instead of fetching every app's manifest and comparing commits
+/// client-side. The worker already tracks per-device install state (via
+/// `report_library_event`) and already has to compute "what's the latest
+/// build" for `/download` — this reuses that same logic server-side, so
+/// "there's an update" and "what a download actually serves" can't
+/// disagree the way two independent implementations could.
+pub async fn fetch_updates(
+    client: &reqwest::Client,
+    device_token: &str,
+) -> Result<Vec<UpdateInfo>, LauncherError> {
+    let resp = client
+        .get(format!("{ORCHESTRATOR_BASE}/updates"))
+        .bearer_auth(device_token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "updates request failed: {}",
+            resp.status()
+        )));
+    }
+
+    let parsed: UpdatesResponse = resp
+        .json()
+        .await
+        .map_err(|e| LauncherError::Network(format!("bad updates response: {e}")))?;
+    if parsed.status != "ok" {
+        return Err(LauncherError::Network("unexpected updates response".into()));
+    }
+    Ok(parsed.updates)
+}
+
 /// Fetches the worker's generated icon for `repo` ("owner/repo") — an
 /// always-available SVG badge (deterministic gradient + initials, and a
 /// real uploaded icon instead when the worker has one on record) served at

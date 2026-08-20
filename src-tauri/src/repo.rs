@@ -49,6 +49,21 @@ pub fn is_safe_commit(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Validates an `owner/repo` string coming from a Browse-tab tile (i.e.
+/// already reported to us by the worker's own `/search`, not user-typed)
+/// before it's turned into a filesystem-path slug — same charset rules as
+/// a `securexe://run` link's `repo` param, just applied to a string that
+/// arrived over IPC instead of a URL query param.
+pub fn is_safe_repo_path(s: &str) -> bool {
+    let mut parts = s.splitn(2, '/');
+    let owner = parts.next().unwrap_or_default();
+    let repo = parts.next();
+    match repo {
+        Some(repo) => is_safe_segment(owner) && is_safe_segment(repo),
+        None => false,
+    }
+}
+
 /// A parsed, signature-verified `securexe://link?user=...&exp=...&sig=...`
 /// request — hands off a device-linking token minted by the website
 /// (lib/signing.ts's signDeviceLinkToken) rather than a repo to run.

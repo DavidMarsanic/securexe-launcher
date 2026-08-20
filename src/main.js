@@ -3,6 +3,9 @@ const { listen } = window.__TAURI__.event;
 
 const galleryEl = document.querySelector("#gallery");
 const emptyStateEl = document.querySelector("#empty-state");
+const myAppsEmptyStateEl = document.querySelector("#my-apps-empty-state");
+const tabBtnEls = document.querySelectorAll(".tab-btn");
+const searchInputEl = document.querySelector("#search-input");
 const bannerEl = document.querySelector("#status-banner");
 const bannerRepoEl = document.querySelector("#status-repo");
 const bannerTextEl = document.querySelector("#status-text");
@@ -35,6 +38,80 @@ const DEFAULT_ICON =
       <line x1="12" y1="16" x2="18" y2="16" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
     </svg>
   `);
+
+// ---- tabs + search --------------------------------------------------------
+
+let activeTab = "installed"; // "installed" | "my-apps" | "browse"
+let searchQuery = "";
+let searchDebounceTimer = null;
+
+// Cached results so switching tabs or re-filtering doesn't require a fresh
+// fetch every time — only the thing that actually changed (a new search
+// query on Browse, a fresh install/uninstall on Installed) re-fetches.
+let installedEntries = [];
+let browseEntries = [];
+
+function matchesQuery(repo) {
+  if (!searchQuery) return true;
+  return repo.toLowerCase().includes(searchQuery);
+}
+
+tabBtnEls.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.tab === activeTab) return;
+    activeTab = btn.dataset.tab;
+    tabBtnEls.forEach((b) => {
+      b.classList.toggle("active", b === btn);
+      b.setAttribute("aria-selected", b === btn ? "true" : "false");
+    });
+    renderActiveTab();
+  });
+});
+
+searchInputEl.addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    searchQuery = searchInputEl.value.trim().toLowerCase();
+    renderActiveTab();
+  }, 200);
+});
+
+// Re-renders (or, for Browse, re-fetches) whatever tab is currently active
+// — the single place every tab-switch, search keystroke, and post-mutation
+// refresh (install/uninstall/relaunch) funnels through, so each of those
+// only has to worry about updating its own cached list, not the DOM.
+function renderActiveTab() {
+  emptyStateEl.classList.add("hidden");
+  myAppsEmptyStateEl.classList.add("hidden");
+  galleryEl.classList.remove("hidden");
+
+  if (activeTab === "installed") {
+    renderGallery(installedEntries.filter((e) => matchesQuery(e.repo)));
+    return;
+  }
+
+  if (activeTab === "my-apps") {
+    galleryEl.innerHTML = "";
+    galleryEl.classList.add("hidden");
+    myAppsEmptyStateEl.classList.remove("hidden");
+    return;
+  }
+
+  // "browse" — re-fetch on every query change since the worker does the
+  // matching server-side (see orchestrator::search_catalog); this isn't a
+  // client-side filter over a locally cached full catalog.
+  fetchAndRenderBrowse();
+}
+
+async function fetchAndRenderBrowse() {
+  try {
+    browseEntries = await invoke("browse_catalog", { query: searchQuery || null });
+  } catch (e) {
+    console.error("browse_catalog failed", e);
+    browseEntries = [];
+  }
+  if (activeTab === "browse") renderBrowse(browseEntries);
+}
 
 // Slugs check_updates last reported as having a newer build available.
 // Populated asynchronously after the gallery itself renders — updates
@@ -274,6 +351,9 @@ function showContextMenu(x, y, entry) {
 function renderGallery(entries) {
   galleryEl.innerHTML = "";
   emptyStateEl.classList.toggle("hidden", entries.length > 0);
+  emptyStateEl.textContent = searchQuery
+    ? `No installed apps match "${searchQuery}".`
+    : "No apps yet — click Download on a project on the site to get started.";
 
   const sorted = [...entries].sort((a, b) => {
     const aTime = a.last_launched_at ?? a.installed_at;
@@ -328,6 +408,77 @@ function renderGallery(entries) {
   applyUpdateBadges();
 }
 
+// Browse-tab tiles come from the public catalog (`browse_catalog`, backed
+// by the worker's `/search`), not the local library — most aren't
+// installed yet, so a tile's primary action is Install rather than a bare
+// relaunch, and `entry.icon_url` is a live remote URL rather than the
+// `icon_data_url` the installed gallery caches locally (see CatalogEntry
+// in lib.rs for why: no reason to fetch/cache an icon for every catalog
+// entry when the worker already serves it directly).
+function renderBrowse(entries) {
+  galleryEl.innerHTML = "";
+  emptyStateEl.classList.toggle("hidden", entries.length > 0);
+  emptyStateEl.textContent = searchQuery
+    ? `No catalog results for "${searchQuery}".`
+    : "The catalog is empty.";
+
+  for (const entry of entries) {
+    const tile = document.createElement("button");
+    tile.className = "app-tile app-tile-browse";
+    tile.title = entry.available ? entry.repo : `${entry.repo} — not built for this platform yet`;
+    tile.dataset.slug = entry.slug;
+    tile.disabled = !entry.available;
+
+    const img = document.createElement("img");
+    img.src = entry.icon_url ?? DEFAULT_ICON;
+    img.alt = "";
+
+    const label = document.createElement("span");
+    label.className = "app-tile-label";
+    label.textContent = entry.repo.split("/").pop();
+
+    const updateBadge = document.createElement("span");
+    updateBadge.className = "app-tile-update-badge";
+    updateBadge.title = "Update available";
+
+    tile.append(img, updateBadge, label);
+
+    if (!entry.installed && entry.available) {
+      const badge = document.createElement("span");
+      badge.className = "app-tile-install-badge";
+      badge.textContent = "Install";
+      tile.appendChild(badge);
+    }
+
+    // Uninstall/Remove only make sense for a tile that's actually on this
+    // device — same context menu the Installed tab uses, since CatalogEntry
+    // carries the same slug/repo shape showContextMenu already reads.
+    if (entry.installed) {
+      tile.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        showContextMenu(e.clientX, e.clientY, entry);
+      });
+    }
+
+    tile.addEventListener("click", async () => {
+      if (tile.disabled) return;
+      tile.disabled = true;
+      const action = entry.installed
+        ? invoke("relaunch", { slug: entry.slug })
+        : invoke("install_from_catalog", { repo: entry.repo });
+      const settled = action.catch((e) => {
+        console.error(entry.installed ? "relaunch failed" : "install failed", e);
+      });
+      await Promise.all([settled, new Promise((resolve) => setTimeout(resolve, 600))]);
+      tile.disabled = false;
+    });
+
+    galleryEl.appendChild(tile);
+  }
+
+  applyUpdateBadges();
+}
+
 // Fetches the worker's generated icon (same one securexe-web's catalog
 // shows via iconUrl) for any tile that's still on the generic placeholder
 // — apps installed before this existed, or whose install-time fetch
@@ -338,6 +489,14 @@ async function backfillIcons() {
   try {
     const filled = await invoke("backfill_icons");
     for (const { slug, icon_data_url } of filled) {
+      // Patch the cached entry too, not just the DOM — the Installed tab
+      // isn't necessarily what's on screen right now (Browse/My Apps might
+      // be), and a later tab switch re-renders from `installedEntries`
+      // rather than re-fetching, so a DOM-only patch would get lost the
+      // moment the user switches away and back.
+      const entry = installedEntries.find((e) => e.slug === slug);
+      if (entry) entry.icon_data_url = icon_data_url;
+
       const img = galleryEl.querySelector(`.app-tile[data-slug="${CSS.escape(slug)}"] img`);
       if (img) img.src = icon_data_url;
     }
@@ -348,11 +507,12 @@ async function backfillIcons() {
 
 async function refreshGallery() {
   try {
-    const entries = await invoke("list_library");
-    renderGallery(entries);
+    installedEntries = await invoke("list_library");
   } catch (e) {
     console.error("failed to load library", e);
+    installedEntries = [];
   }
+  renderActiveTab();
   checkUpdates();
   backfillIcons();
 }

@@ -30,8 +30,20 @@
         <button id="update-all-btn" class="unlink-btn">Update all</button>
       </div>
 
+      <div class="tab-bar" role="tablist">
+        <button type="button" class="tab-btn active" data-tab="installed" role="tab" aria-selected="true">Installed</button>
+        <button type="button" class="tab-btn" data-tab="my-apps" role="tab" aria-selected="false">My Apps</button>
+        <button type="button" class="tab-btn" data-tab="browse" role="tab" aria-selected="false">Browse</button>
+      </div>
+
+      <input id="search-input" class="search-input" type="search" placeholder="Search" />
+
       <p id="empty-state" class="empty-state">
         No apps yet — click Download on a project on the site to get started.
+      </p>
+
+      <p id="my-apps-empty-state" class="empty-state hidden">
+        My Apps needs your account synced across devices — coming soon.
       </p>
 
       <div id="gallery" class="gallery"></div>

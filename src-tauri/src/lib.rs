@@ -68,6 +68,70 @@ fn list_library() -> Result<Vec<GalleryEntry>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// One Browse-tab tile — a `/search` result reduced to what the webview
+/// needs. Unlike `GalleryEntry`, `icon_url` is a live remote URL the
+/// frontend loads directly (no local caching/round-trip), since this is
+/// catalog browsing, not an already-installed app.
+#[derive(Serialize)]
+struct CatalogEntry {
+    repo: String,
+    slug: String,
+    icon_url: Option<String>,
+    installed: bool,
+    available: bool,
+}
+
+/// Lists (optionally filtered by `query`) every applet in the public
+/// catalog via the worker's `/search` — the Browse tab's data source. Utility
+/// repos (dev tools like icon-composer, not meant for end users to browse)
+/// are filtered out, same default as securexe-web's own Library page.
+/// `installed` is cross-referenced against the local library so the
+/// frontend can show "Install" vs "Launch" per tile; `available` reflects
+/// whether the worker actually has a successful build for this platform.
+#[tauri::command]
+async fn browse_catalog(query: Option<String>) -> Result<Vec<CatalogEntry>, String> {
+    let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
+    let results = orchestrator::search_catalog(&client, query.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let installed: HashSet<String> = library::load()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|e| e.repo)
+        .collect();
+    let target = platform::target_key().map_err(|e| e.to_string())?;
+
+    Ok(results
+        .into_iter()
+        .filter(|r| r.kind.as_deref() != Some("utility"))
+        .map(|r| CatalogEntry {
+            available: r.artifact_for(&target).is_some(),
+            installed: installed.contains(&r.repo),
+            slug: r.repo.replacen('/', "__", 1),
+            repo: r.repo,
+            icon_url: r.icon_url,
+        })
+        .collect())
+}
+
+/// Installs (and launches) a Browse-tab tile — reuses the exact same
+/// fetch/verify/install/launch pipeline as a signed `securexe://run` link
+/// or the in-app "Update" action (see `flow::install_and_launch`'s doc
+/// comment for why no signature is needed here: the user is explicitly
+/// clicking Install on something already sitting in their own launcher,
+/// not following an arbitrary webpage link).
+#[tauri::command]
+async fn install_from_catalog(app: tauri::AppHandle, repo: String) -> Result<(), String> {
+    if !repo::is_safe_repo_path(&repo) {
+        return Err(format!("invalid repo '{repo}'"));
+    }
+    let slug = repo.replacen('/', "__", 1);
+    flow::install_and_launch(&app, repo, slug, None, true)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// One app whose icon was just fetched from the worker and cached — all
 /// `backfill_icons` returns, since the frontend only needs to patch the
 /// tiles that actually changed, not a full re-describe of the library.
@@ -165,6 +229,14 @@ fn uninstall(slug: String) -> Result<(), String> {
 /// without losing the ability to just relaunch it later; the files are
 /// still sitting in ~/.securexe/apps, just no longer in library.json or
 /// reported as installed on this device.
+///
+/// Reports the same `"uninstalled"` action as `uninstall` above — the
+/// backend's per-device library record only ever means "this device has it
+/// installed" or not, it has no separate notion of "kept a local cache but
+/// stopped tracking it". (The backend used to reject a distinct `"removed"`
+/// action outright — it only ever recognized
+/// `"installed" | "uninstalled" | "launched"` — so this call was silently
+/// 400ing and never actually reaching the worker at all.)
 #[tauri::command]
 fn remove_from_library(slug: String) -> Result<(), String> {
     let entry = library::find(&slug).map_err(|e| e.to_string())?;
@@ -178,7 +250,7 @@ fn remove_from_library(slug: String) -> Result<(), String> {
                 &acct.device_token,
                 &entry.repo,
                 Some(&entry.commit),
-                "removed",
+                "uninstalled",
             )
             .await;
         });
@@ -196,30 +268,29 @@ struct UpdateStatus {
     slug: String,
 }
 
-/// Checks every installed app against the orchestrator's current manifest
-/// for that repo (no `commit` param = latest) and reports which ones are
-/// behind. Runs all the checks concurrently — with a library of a dozen+
-/// apps, doing this one at a time would make the "is anything updatable"
-/// signal noticeably slow to arrive for something that's meant to be the
-/// most prominent thing in the UI. A single app's check failing (offline,
-/// repo deleted upstream, etc.) just drops it from the result silently
-/// rather than failing the whole batch — one bad repo shouldn't hide
-/// legitimate updates for everything else.
+/// Asks the worker which installed apps are stale via `GET /updates` — one
+/// call for the whole library instead of fetching every app's manifest and
+/// comparing commits client-side (see `orchestrator::fetch_updates`). Needs
+/// a linked device; an unlinked launcher has nothing to check against and
+/// just reports nothing updatable, same as any other failure here.
 #[tauri::command]
 async fn check_updates() -> Result<Vec<UpdateStatus>, String> {
+    let Some(acct) = account::load().map_err(|e| e.to_string())? else {
+        return Ok(Vec::new());
+    };
     let entries = library::load().map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
 
-    let checks = entries.into_iter().map(|entry| {
-        let client = client.clone();
-        async move {
-            let manifest = orchestrator::fetch_manifest(&client, &entry.slug, None).await.ok()?;
-            let latest = manifest.source?.commit;
-            (latest != entry.commit).then_some(UpdateStatus { slug: entry.slug })
-        }
-    });
+    let stale_repos: HashSet<String> = orchestrator::fetch_updates(&client, &acct.device_token)
+        .await
+        .map(|updates| updates.into_iter().map(|u| u.repo).collect())
+        .unwrap_or_default();
 
-    Ok(futures_util::future::join_all(checks).await.into_iter().flatten().collect())
+    Ok(entries
+        .into_iter()
+        .filter(|e| stale_repos.contains(&e.repo))
+        .map(|e| UpdateStatus { slug: e.slug })
+        .collect())
 }
 
 /// Updates one app to whatever the orchestrator currently reports as the
@@ -252,18 +323,17 @@ async fn update_slug(app: tauri::AppHandle, slug: String) -> Result<(), String> 
 /// slug added to the returned list, everything else still gets updated.
 #[tauri::command]
 async fn update_all(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let Some(acct) = account::load().map_err(|e| e.to_string())? else {
+        return Ok(Vec::new());
+    };
     let entries = library::load().map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
 
-    let checks = entries.iter().map(|entry| {
-        let client = client.clone();
-        async move {
-            let manifest = orchestrator::fetch_manifest(&client, &entry.slug, None).await.ok()?;
-            let latest = manifest.source?.commit;
-            (latest != entry.commit).then(|| entry.clone())
-        }
-    });
-    let stale: Vec<_> = futures_util::future::join_all(checks).await.into_iter().flatten().collect();
+    let stale_repos: HashSet<String> = orchestrator::fetch_updates(&client, &acct.device_token)
+        .await
+        .map(|updates| updates.into_iter().map(|u| u.repo).collect())
+        .unwrap_or_default();
+    let stale: Vec<_> = entries.into_iter().filter(|e| stale_repos.contains(&e.repo)).collect();
 
     let mut failed = Vec::new();
     for entry in stale {
@@ -395,6 +465,8 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             list_library,
+            browse_catalog,
+            install_from_catalog,
             backfill_icons,
             relaunch,
             uninstall,
