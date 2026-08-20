@@ -1,17 +1,21 @@
-//! Prototype: instead of an installed applet spawning its own Chrome
-//! `--app=` window (which shows Chrome's own icon in the Dock, not the
-//! applet's — a hard limitation of that approach, not fixable by anything
-//! in the applet's own bundle), the launcher spawns the applet's local
-//! server directly and hosts its UI in a real Tauri window of its own.
-//! That window belongs to securexe-launcher's own process, so it shares
-//! the launcher's Dock icon rather than Chrome's — and macOS's own
+//! Instead of an installed applet spawning its own Chrome `--app=` window
+//! (which shows Chrome's own icon in the Dock, not the applet's — a hard
+//! limitation of that approach, not fixable by anything in the applet's
+//! own bundle), the launcher spawns the applet's local server directly
+//! and hosts its UI in a real Tauri window of its own. That window
+//! belongs to securexe-launcher's own process, so it shares the
+//! launcher's Dock icon rather than Chrome's — and macOS's own
 //! right-click-Dock-icon window list (built in, no extra code) becomes
 //! the "what's open" affordance, keyed off each window's title.
 //!
-//! This module is deliberately standalone and not yet wired into the real
-//! install/manifest flow (flow.rs) — it's a proof of the mechanism first,
-//! on one real app (gif-maker), before deciding whether/how to fold it
-//! into the production launch path.
+//! Wired into the real install/manifest flow (flow.rs) and the relaunch
+//! path (lib.rs): both try this first for anything marked `is_gui` and
+//! fall back to `run::launch`'s plain spawn only if it fails. That
+//! fallback matters for apps that haven't adopted the `SECUREXE_HOSTED` /
+//! stderr-URL-reporting convention this depends on — not hypothetical:
+//! the developer guide on the website documents that convention as
+//! optional, so any third-party app in the catalog that doesn't speak it
+//! needs to keep working exactly as before.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -75,11 +79,9 @@ pub async fn launch_hosted(
 
     // The child keeps running in the background for as long as this
     // window is open — nothing here waits on it, and its own idle-timeout
-    // watchdog is what eventually exits it if the window gets closed
-    // without a clean shutdown signal reaching it. Detaching (rather than
-    // holding a Child handle somewhere) is fine for this prototype; the
-    // real integration will need to track this alongside the window's
-    // close event so a closed window actually ends the process.
+    // watchdog (every app in this family self-exits after 30 idle
+    // minutes) is what eventually ends it if the window gets closed
+    // without a clean shutdown signal reaching it first.
     tokio::spawn(async move {
         let _ = child.wait().await;
     });

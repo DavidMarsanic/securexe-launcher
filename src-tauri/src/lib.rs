@@ -62,12 +62,15 @@ fn list_library() -> Result<Vec<GalleryEntry>, String> {
 /// machine in the first place; once that's verified once, replaying it
 /// locally doesn't need the site back in the loop.
 #[tauri::command]
-fn relaunch(slug: String) -> Result<(), String> {
+async fn relaunch(app: tauri::AppHandle, slug: String) -> Result<(), String> {
     let entry = library::find(&slug)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("{slug} is not installed"))?;
     let cwd = install::sandbox_dir(&slug).map_err(|e| e.to_string())?;
-    run::launch(&entry.path, &cwd).map_err(|e| e.to_string())?;
+    let title = entry.repo.rsplit('/').next().unwrap_or(&entry.repo).to_string();
+    flow::launch_installed(&app, &slug, &title, &entry.path, &cwd, entry.is_gui)
+        .await
+        .map_err(|e| e.to_string())?;
     let _ = library::touch_last_launched(&slug);
     Ok(())
 }
@@ -214,26 +217,6 @@ async fn unlink() -> Result<(), String> {
     account::clear().map_err(|e| e.to_string())
 }
 
-/// Prototype-only: launches `path` as a hosted applet in its own native
-/// window instead of letting it spawn its own Chrome window — see
-/// hosted.rs. Not part of the real install/manifest flow yet; `path`
-/// comes straight from the frontend for now so this can be exercised
-/// against a locally-built applet binary without needing it published
-/// through the orchestrator first.
-#[tauri::command]
-async fn launch_hosted_test(
-    app: tauri::AppHandle,
-    slug: String,
-    title: String,
-    path: String,
-) -> Result<(), String> {
-    let path = std::path::PathBuf::from(path);
-    let cwd = install::sandbox_dir(&slug).map_err(|e| e.to_string())?;
-    hosted::launch_hosted(&app, &slug, &title, &path, &cwd)
-        .await
-        .map_err(|e| e.to_string())
-}
-
 /// Cold starts can deliver the same launch URL through both
 /// `get_current()` and the `on_open_url` listener below — a known overlap
 /// in how the OS/plugin replay the Apple Event that launched the app.
@@ -281,8 +264,7 @@ pub fn run() {
             check_updates,
             update_slug,
             get_account,
-            unlink,
-            launch_hosted_test
+            unlink
         ])
         .setup(|app| {
             let handle = app.handle().clone();

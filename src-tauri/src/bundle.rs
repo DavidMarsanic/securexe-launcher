@@ -131,3 +131,65 @@ pub fn extract_icon(app_dir: &Path, dest_png: &Path) -> Option<PathBuf> {
 pub fn extract_icon(_app_dir: &Path, _dest_png: &Path) -> Option<PathBuf> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression check for a real theory ruled out while debugging a live
+    /// hosted-launch failure: hosted.rs spawns the resolved executable
+    /// directly (unlike run::launch, which calls make_executable first),
+    /// so if extract_zip ever stopped restoring the executable bit a real
+    /// macOS .app.zip stores for launch.sh, the spawn would silently fail
+    /// and every GUI app would fall back to the old Chrome-window path
+    /// with no visible error. Builds its own zip (rather than depending on
+    /// a real downloaded artifact on disk) so it runs the same everywhere,
+    /// storing a Unix mode via `unix_permissions` the same way a real
+    /// build's zip does.
+    #[test]
+    fn extract_zip_restores_executable_bit() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use zip::write::SimpleFileOptions;
+
+        let dir = std::env::temp_dir().join(format!("bundle-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("Fixture.app.zip");
+
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let opts = SimpleFileOptions::default().unix_permissions(0o755);
+        writer.start_file("Fixture.app/Contents/MacOS/launch.sh", opts).unwrap();
+        writer.write_all(b"#!/bin/sh\necho hi\n").unwrap();
+        writer
+            .start_file(
+                "Fixture.app/Contents/Info.plist",
+                SimpleFileOptions::default().unix_permissions(0o644),
+            )
+            .unwrap();
+        writer
+            .write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>launch.sh</string>
+</dict></plist>"#,
+            )
+            .unwrap();
+        writer.finish().unwrap();
+
+        let resolved = resolve_launchable(&zip_path).expect("resolve_launchable failed");
+        let mode = std::fs::metadata(&resolved.executable)
+            .expect("stat extracted executable")
+            .permissions()
+            .mode();
+        assert!(
+            mode & 0o111 != 0,
+            "extracted {} is not executable (mode {:o}) — zip crate's extract() dropped the Unix permission bits the archive stores",
+            resolved.executable.display(),
+            mode
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -1,8 +1,10 @@
+use std::path::Path;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::error::LauncherError;
-use crate::{account, bundle, install, library, orchestrator, platform, repo, run, verify};
+use crate::{account, bundle, hosted, install, library, orchestrator, platform, repo, run, verify};
 
 pub const STATUS_EVENT: &str = "launcher-status";
 
@@ -158,10 +160,44 @@ pub async fn install_and_launch(
     }
 
     let cwd = install::sandbox_dir(&slug)?;
-    run::launch(&resolved.executable, &cwd)?;
+    let title = display_title(&repo_path);
+    launch_installed(app, &slug, &title, &resolved.executable, &cwd, is_gui).await?;
 
     emit(app, StatusEvent::Done { repo: repo_path });
     Ok(())
+}
+
+/// The last path segment of a `owner/repo` string — matches exactly what
+/// the gallery tile already shows as its label (`entry.repo.split("/").pop()`
+/// in main.js), so a hosted window's title lines up with the tile you
+/// clicked to open it.
+fn display_title(repo_path: &str) -> String {
+    repo_path.rsplit('/').next().unwrap_or(repo_path).to_string()
+}
+
+/// Launches an installed app, preferring a hosted window (see hosted.rs)
+/// for anything GUI so it shares the launcher's own Dock icon instead of
+/// spawning a separate Chrome window. Falls back to `run::launch`'s plain
+/// spawn if hosting fails — the app doesn't speak the `SECUREXE_HOSTED`
+/// convention (documented as optional for third-party apps), or its
+/// local server didn't come up in time. Non-GUI tools always go straight
+/// to `run::launch`, which wraps them in a terminal; hosting only makes
+/// sense for something that serves a local web UI.
+pub async fn launch_installed(
+    app: &AppHandle,
+    slug: &str,
+    title: &str,
+    executable: &Path,
+    cwd: &Path,
+    is_gui: bool,
+) -> Result<(), LauncherError> {
+    if is_gui {
+        match hosted::launch_hosted(app, slug, title, executable, cwd).await {
+            Ok(()) => return Ok(()),
+            Err(e) => eprintln!("[hosted] falling back to plain launch for {slug}: {e}"),
+        }
+    }
+    run::launch(executable, cwd)
 }
 
 /// Entry point for every incoming `securexe://link?...` URL — associates
