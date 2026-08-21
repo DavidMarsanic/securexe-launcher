@@ -280,6 +280,33 @@ pub async fn fetch_account_library(
     Ok(parsed.items)
 }
 
+/// Adds `repo` to this account's library — `POST /library/add`, idempotent
+/// on the backend (re-adding an already-owned repo keeps its original
+/// `addedAt`). Called from the Browse tab's Install action (see
+/// `install_from_catalog` in lib.rs) — clicking Install there is a
+/// deliberate "I want this app" action, distinct from a one-off
+/// `securexe://run` link, so it's the one install path that also adds to
+/// the library rather than leaving that to a separate action.
+pub async fn add_to_library(
+    client: &reqwest::Client,
+    device_token: &str,
+    repo: &str,
+) -> Result<(), LauncherError> {
+    let resp = client
+        .post(format!("{ORCHESTRATOR_BASE}/library/add"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({ "repo": repo }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "library add failed: {}",
+            resp.status()
+        )));
+    }
+    Ok(())
+}
+
 /// Removes `repo` from this account's library — `POST /library/remove`.
 /// A single ownership record, no cascade to any device's install state
 /// (removing something from your library doesn't uninstall it anywhere) —

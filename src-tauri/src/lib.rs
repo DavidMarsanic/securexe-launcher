@@ -196,15 +196,31 @@ async fn list_account_library() -> Result<Vec<AccountLibraryEntry>, String> {
 /// comment for why no signature is needed here: the user is explicitly
 /// clicking Install on something already sitting in their own launcher,
 /// not following an arbitrary webpage link).
+///
+/// Also adds `repo` to the account library — the backend keeps install and
+/// library fully decoupled (no auto-add on install server-side), but
+/// clicking Install in Browse is a deliberate "I want this app" action, so
+/// this is the one client-side path that does both. Best-effort and
+/// fire-and-forget, same as the install-event report inside
+/// `install_and_launch`: a library-sync hiccup shouldn't surface as
+/// "Install failed" when the app itself installed and launched fine.
 #[tauri::command]
 async fn install_from_catalog(app: tauri::AppHandle, repo: String) -> Result<(), String> {
     if !repo::is_safe_repo_path(&repo) {
         return Err(format!("invalid repo '{repo}'"));
     }
     let slug = repo.replacen('/', "__", 1);
-    flow::install_and_launch(&app, repo, slug, None, true)
+    flow::install_and_launch(&app, repo.clone(), slug, None, true)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    if let Some(acct) = account::load().ok().flatten() {
+        tauri::async_runtime::spawn(async move {
+            let client = reqwest::Client::new();
+            let _ = orchestrator::add_to_library(&client, &acct.device_token, &repo).await;
+        });
+    }
+    Ok(())
 }
 
 /// One app whose icon was just fetched from the worker and cached — all
