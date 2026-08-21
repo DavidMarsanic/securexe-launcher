@@ -422,7 +422,7 @@ function positionAndOpenMenu(menu, x, y) {
 // for the invoke's own duration doesn't catch it. Holding the tile disabled
 // for a fixed cooldown instead collapses a single click and a double-click
 // into exactly one action regardless of how fast it finishes.
-function makeAppTile(entry, { iconSrc, action, actionLabel, showInstallBadge, contextMenuKind, disabled, disabledTitle, sublabel }) {
+function makeAppTile(entry, { iconSrc, action, actionLabel, showInstallBadge, contextMenuKind, disabled, disabledTitle }) {
   const tile = document.createElement("button");
   tile.className = "app-tile";
   tile.title = disabled ? disabledTitle : entry.repo;
@@ -442,13 +442,6 @@ function makeAppTile(entry, { iconSrc, action, actionLabel, showInstallBadge, co
   updateBadge.title = "Update available";
 
   tile.append(img, updateBadge, label);
-
-  if (sublabel) {
-    const sub = document.createElement("span");
-    sub.className = "app-tile-sublabel";
-    sub.textContent = sublabel;
-    tile.appendChild(sub);
-  }
 
   if (showInstallBadge) {
     const badge = document.createElement("span");
@@ -530,7 +523,6 @@ function renderLibrary(entries) {
         actionLabel: "install",
         showInstallBadge: true,
         contextMenuKind: "library",
-        sublabel: entry.device_count > 1 ? `On ${entry.device_count} devices` : null,
       })
     );
   }

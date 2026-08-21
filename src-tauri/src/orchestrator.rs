@@ -195,7 +195,7 @@ struct UpdatesResponse {
 /// Asks the worker which of this device's installed apps are stale, in one
 /// call, instead of fetching every app's manifest and comparing commits
 /// client-side. The worker already tracks per-device install state (via
-/// `report_library_event`) and already has to compute "what's the latest
+/// `report_install_event`) and already has to compute "what's the latest
 /// build" for `/download` — this reuses that same logic server-side, so
 /// "there's an update" and "what a download actually serves" can't
 /// disagree the way two independent implementations could.
@@ -234,13 +234,12 @@ pub fn icon_url(repo: &str) -> String {
     format!("{ORCHESTRATOR_BASE}/icon?repo={}", urlencoding_component(repo))
 }
 
-/// One record from the worker's account-wide library — `GET /library`,
-/// the source of truth for "everything in my account", independent of
-/// whether it's installed on *this* device. The response also carries
-/// `commit`/`deviceId`/`installedAt` per record (see `lib/devices.ts`'s
-/// `LibraryItem` on the website), but My Apps' library section only needs
-/// the repo — one record per device means counting how many share a repo
-/// already gives the right device count without reading `deviceId` itself.
+/// One record from the worker's account-wide library — `GET /library`.
+/// As of the backend's library/install split, this is a genuinely separate,
+/// persistent, per-account *ownership* concept (`LIBRARY_DIR`, keyed by
+/// GitHub username) — nothing to do with what's installed where. There's
+/// no auto-add on install and no per-device shape anymore (no `deviceId`,
+/// no cross-device dedup needed): one row per repo the account owns.
 #[derive(Debug, Deserialize)]
 pub struct LibraryItem {
     pub repo: String,
@@ -252,13 +251,12 @@ struct LibraryResponse {
     items: Vec<LibraryItem>,
 }
 
-/// Fetches this account's library across every linked device. Bearer-authed
-/// with the device token — as of this writing `GET /library` only actually
-/// accepts a *session* token (the one securexe-web's own dashboard uses),
-/// so this currently 401s for the launcher; it's written against the
-/// intended contract (same shape `lib/devices.ts`'s `getLibrary` reads) so
-/// My Apps starts working the moment the worker accepts device tokens here
-/// too, with no further launcher-side change.
+/// Fetches this account's library — everything explicitly added to it,
+/// independent of whether it's installed anywhere. Bearer-authed with the
+/// device token; written against the intended contract, so if the worker
+/// hasn't rolled this split out yet (or doesn't accept device tokens here),
+/// this surfaces that as a real `Err` rather than pretending the library is
+/// just empty.
 pub async fn fetch_account_library(
     client: &reqwest::Client,
     device_token: &str,
@@ -280,6 +278,30 @@ pub async fn fetch_account_library(
         .await
         .map_err(|e| LauncherError::Network(format!("bad library response: {e}")))?;
     Ok(parsed.items)
+}
+
+/// Removes `repo` from this account's library — `POST /library/remove`.
+/// A single ownership record, no cascade to any device's install state
+/// (removing something from your library doesn't uninstall it anywhere) —
+/// this is the My Apps library section's "Remove" action.
+pub async fn remove_from_account_library(
+    client: &reqwest::Client,
+    device_token: &str,
+    repo: &str,
+) -> Result<(), LauncherError> {
+    let resp = client
+        .post(format!("{ORCHESTRATOR_BASE}/library/remove"))
+        .bearer_auth(device_token)
+        .json(&serde_json::json!({ "repo": repo }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(LauncherError::Network(format!(
+            "library remove failed: {}",
+            resp.status()
+        )));
+    }
+    Ok(())
 }
 
 /// Fetches the worker's generated icon for `repo` ("owner/repo") — an
@@ -365,13 +387,14 @@ pub async fn exchange_device_link(
         .ok_or_else(|| LauncherError::Network("device-link response missing token".into()))
 }
 
-/// Best-effort install/uninstall event report, used to keep the website's
-/// "your library" view in sync with what's actually on this device. Callers
-/// (flow.rs, lib.rs's uninstall command) fire this on a spawned task and
-/// discard the result — reporting failing should never block the local
-/// install/uninstall it's describing. Same not-yet-built-on-the-worker
-/// caveat as exchange_device_link.
-pub async fn report_library_event(
+/// Best-effort install/uninstall/launch event report — per-device and
+/// ephemeral (`INSTALLS_DIR` on the worker), completely separate from the
+/// account-wide library above. `action` is one of "installed" / "uninstalled"
+/// / "launched" only; there's no "removed" here — that meaning now belongs
+/// to `remove_from_account_library`. Callers (flow.rs, lib.rs's uninstall
+/// command) fire this on a spawned task and discard the result — reporting
+/// failing should never block the local install/uninstall it's describing.
+pub async fn report_install_event(
     client: &reqwest::Client,
     device_token: &str,
     repo: &str,
@@ -379,7 +402,7 @@ pub async fn report_library_event(
     action: &str,
 ) -> Result<(), LauncherError> {
     let resp = client
-        .post(format!("{ORCHESTRATOR_BASE}/library/events"))
+        .post(format!("{ORCHESTRATOR_BASE}/installs/events"))
         .bearer_auth(device_token)
         .json(&serde_json::json!({
             "repo": repo,
@@ -391,7 +414,7 @@ pub async fn report_library_event(
 
     if !resp.status().is_success() {
         return Err(LauncherError::Network(format!(
-            "library event report failed: {}",
+            "install event report failed: {}",
             resp.status()
         )));
     }
@@ -404,7 +427,7 @@ pub async fn report_library_event(
 /// went on listing a device the user had explicitly disconnected.
 ///
 /// NOTE: `POST /devices/unlink` doesn't exist on the worker yet — same
-/// not-yet-built seam as exchange_device_link/report_library_event.
+/// not-yet-built seam as exchange_device_link.
 pub async fn unlink_device(
     client: &reqwest::Client,
     device_token: &str,

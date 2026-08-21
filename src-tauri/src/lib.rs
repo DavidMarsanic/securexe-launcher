@@ -13,7 +13,7 @@ mod self_update;
 mod signature;
 mod verify;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -118,12 +118,15 @@ async fn browse_catalog(query: Option<String>) -> Result<Vec<CatalogEntry>, Stri
 /// Removes `repo` from the account's library — the My Apps library
 /// section's "Remove" action, for an app that isn't installed on *this*
 /// device (if it were, `remove_from_library`/`uninstall` above would apply
-/// instead, since those have a local library.json entry to key off).
-/// There's no local state to update here — this is purely a backend call
-/// — so unlike `uninstall`/`remove_from_library`'s fire-and-forget spawn,
+/// instead, since those act on a local library.json entry). This is My
+/// Apps' library-section "Remove" — the account library and per-device
+/// installs are now fully separate concepts on the backend
+/// (`POST /library/remove`, no cascade to any device's install state), so
+/// removing something here never touches what's installed anywhere.
+/// There's no local state to update either way — purely a backend call —
+/// so unlike `uninstall`/`remove_from_library`'s fire-and-forget spawn,
 /// this is awaited: with nothing local to fall back on, the frontend needs
-/// to know honestly whether it actually took, not optimistically assume it
-/// did just because the local half (which doesn't exist here) succeeded.
+/// to know honestly whether it actually took.
 #[tauri::command]
 async fn remove_from_account(repo: String) -> Result<(), String> {
     if !repo::is_safe_repo_path(&repo) {
@@ -133,32 +136,32 @@ async fn remove_from_account(repo: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no account linked".to_string())?;
     let client = reqwest::Client::new();
-    orchestrator::report_library_event(&client, &acct.device_token, &repo, None, "uninstalled")
+    orchestrator::remove_from_account_library(&client, &acct.device_token, &repo)
         .await
         .map_err(|e| e.to_string())
 }
 
-/// One entry in My Apps' "library" section — a repo that's in this
-/// account's library (on some device) but not installed on *this* one.
-/// `device_count` is how many linked devices currently have it, so the
-/// frontend can show "on 2 other devices" the way securexe-web's dashboard
-/// already does.
+/// One entry in My Apps' "library" section — a repo owned by this account
+/// (explicitly added, independent of install state) that isn't installed
+/// on *this* device.
 #[derive(Serialize)]
 struct AccountLibraryEntry {
     repo: String,
     slug: String,
     icon_url: String,
-    device_count: usize,
 }
 
-/// Lists the account-wide library (`GET /library`), minus whatever's
-/// already installed on this device — those show in My Apps' Installed
-/// section instead, from purely local data. Returns an empty list (not an
-/// error) when no account is linked, since that's a legitimate "nothing to
-/// show" rather than a failure; a real fetch failure (today: every call,
-/// since `/library` doesn't accept a device token yet — see
-/// `orchestrator::fetch_account_library`) is left as `Err` so the frontend
-/// can say so honestly instead of silently rendering an empty section.
+/// Lists the account's library (`GET /library`) minus whatever's already
+/// installed on this device — those show in My Apps' Installed section
+/// instead, from purely local data. There's deliberately no auto-add on
+/// install (a fresh install never shows up here on its own — the account
+/// library only ever grows through an explicit add), so an empty result is
+/// entirely expected for an account that's never added anything. Returns an
+/// empty list (not an error) when no account is linked, since that's a
+/// legitimate "nothing to show" rather than a failure; a real fetch failure
+/// (see `orchestrator::fetch_account_library`) is left as `Err` so the
+/// frontend can say so honestly instead of silently rendering an empty
+/// section that looks the same as "you just haven't added anything yet".
 #[tauri::command]
 async fn list_account_library() -> Result<Vec<AccountLibraryEntry>, String> {
     let Some(acct) = account::load().map_err(|e| e.to_string())? else {
@@ -172,11 +175,6 @@ async fn list_account_library() -> Result<Vec<AccountLibraryEntry>, String> {
     let installed_locally: HashSet<String> =
         library::load().map_err(|e| e.to_string())?.into_iter().map(|e| e.repo).collect();
 
-    let mut device_counts: HashMap<String, usize> = HashMap::new();
-    for item in &items {
-        *device_counts.entry(item.repo.clone()).or_insert(0) += 1;
-    }
-
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for item in items {
@@ -186,7 +184,6 @@ async fn list_account_library() -> Result<Vec<AccountLibraryEntry>, String> {
         out.push(AccountLibraryEntry {
             slug: item.repo.replacen('/', "__", 1),
             icon_url: orchestrator::icon_url(&item.repo),
-            device_count: device_counts[&item.repo],
             repo: item.repo,
         });
     }
@@ -287,7 +284,7 @@ fn uninstall(slug: String) -> Result<(), String> {
     if let (Some(entry), Some(acct)) = (entry, account::load().ok().flatten()) {
         tauri::async_runtime::spawn(async move {
             let client = reqwest::Client::new();
-            let _ = orchestrator::report_library_event(
+            let _ = orchestrator::report_install_event(
                 &client,
                 &acct.device_token,
                 &entry.repo,
@@ -308,13 +305,14 @@ fn uninstall(slug: String) -> Result<(), String> {
 /// still sitting in ~/.securexe/apps, just no longer in library.json or
 /// reported as installed on this device.
 ///
-/// Reports the same `"uninstalled"` action as `uninstall` above — the
-/// backend's per-device library record only ever means "this device has it
-/// installed" or not, it has no separate notion of "kept a local cache but
-/// stopped tracking it". (The backend used to reject a distinct `"removed"`
-/// action outright — it only ever recognized
-/// `"installed" | "uninstalled" | "launched"` — so this call was silently
-/// 400ing and never actually reaching the worker at all.)
+/// Reports the same `"uninstalled"` action as `uninstall` above, to the
+/// per-device install log — the backend's install-event vocabulary only
+/// ever means "this device has it installed" or not, it has no separate
+/// notion of "kept a local cache but stopped tracking it". This never
+/// touches the account library (`GET /library` / `remove_from_account`
+/// above) — that's a completely separate, explicit-add-only concept now;
+/// removing a repo from your library and removing it from this device's
+/// tracked installs are unrelated actions.
 #[tauri::command]
 fn remove_from_library(slug: String) -> Result<(), String> {
     let entry = library::find(&slug).map_err(|e| e.to_string())?;
@@ -323,7 +321,7 @@ fn remove_from_library(slug: String) -> Result<(), String> {
     if let (Some(entry), Some(acct)) = (entry, account::load().ok().flatten()) {
         tauri::async_runtime::spawn(async move {
             let client = reqwest::Client::new();
-            let _ = orchestrator::report_library_event(
+            let _ = orchestrator::report_install_event(
                 &client,
                 &acct.device_token,
                 &entry.repo,

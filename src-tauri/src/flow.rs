@@ -157,7 +157,7 @@ pub async fn install_and_launch(
     // Only report "installed" on a genuinely new install or a version
     // change — record_install runs on every launch (including cache hits),
     // and reporting an event on every relaunch of an unchanged app would
-    // spam the worker for no reason the website's library view cares about.
+    // spam the worker's per-device install log for no reason.
     let changed = existing_entry.map(|e| e.commit != commit).unwrap_or(true);
     if changed {
         if let Some(acct) = account::load().ok().flatten() {
@@ -165,7 +165,7 @@ pub async fn install_and_launch(
             let repo_path = repo_path.clone();
             let commit = commit.clone();
             tauri::async_runtime::spawn(async move {
-                let _ = orchestrator::report_library_event(
+                let _ = orchestrator::report_install_event(
                     &client,
                     &acct.device_token,
                     &repo_path,
@@ -262,16 +262,19 @@ async fn link_inner(app: &AppHandle, raw_url: &str) -> Result<(), LauncherError>
 
     emit(app, StatusEvent::Linked { user: req.user });
 
-    // Backfill: report everything already in the local library, not just
-    // installs/uninstalls from this point forward — otherwise anything
-    // installed before this device got linked would never be visible on
-    // the website, even though it's genuinely present on disk. Re-linking
-    // an already-linked device just re-reports the same "installed" state,
-    // which is a harmless no-op upsert on the worker's side.
+    // Backfill: report everything already installed locally to the
+    // worker's per-device install log, not just installs/uninstalls from
+    // this point forward — otherwise anything installed before this device
+    // got linked would never show up in this device's install history, even
+    // though it's genuinely present on disk. Re-linking an already-linked
+    // device just re-reports the same "installed" state, which is a
+    // harmless no-op upsert on the worker's side. Deliberately doesn't touch
+    // the account library — there's no auto-add on install, linking a
+    // device doesn't add anything to it either.
     if let Ok(entries) = library::load() {
         tauri::async_runtime::spawn(async move {
             for entry in entries {
-                let _ = orchestrator::report_library_event(
+                let _ = orchestrator::report_install_event(
                     &client,
                     &device_token,
                     &entry.repo,

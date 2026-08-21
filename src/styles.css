@@ -194,16 +194,6 @@ body {
   display: none;
 }
 
-.app-tile-sublabel {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: center;
-  font-size: 0.72em;
-  color: var(--muted);
-}
-
 .app-tile {
   position: relative;
   display: flex;
