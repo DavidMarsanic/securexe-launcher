@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" role="img" aria-label="Brightencode logo">
+  <defs>
+    <mask id="top-cut"><rect width="220" height="220" fill="#fff"/><circle cx="116" cy="76" r="34" fill="#000"/></mask>
+    <mask id="bottom-cut"><rect width="220" height="220" fill="#fff"/><circle cx="116" cy="144" r="34" fill="#000"/></mask>
+  </defs>
+  <rect width="220" height="220" rx="48" fill="#1C1B33"/>
+  <rect x="18" y="18" width="86" height="90" rx="29" fill="#FFC33D"/>
+  <rect x="18" y="112" width="86" height="90" rx="29" fill="#FF765F"/>
+  <rect x="112" y="18" width="90" height="90" rx="29" fill="#FF765F" mask="url(#top-cut)"/>
+  <rect x="112" y="112" width="90" height="90" rx="29" fill="#FFF8EC" mask="url(#bottom-cut)"/>
+</svg>

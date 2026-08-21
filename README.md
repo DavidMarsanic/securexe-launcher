@@ -1,3 +1,5 @@
+<img src=".github/assets/logo.svg" width="72" height="72" alt="Brightencode logo">
+
 # securexe-launcher
 
 A small, cross-platform desktop helper — the "install + launch" half of the Securexe platform. It does not browse, build, or manage a catalog; that lives on the website. Its job is narrow: register the `securexe://` URL protocol, and when invoked, download the right binary from the orchestrator at `worker.brightencode.com` and run it.
