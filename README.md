@@ -53,6 +53,42 @@ https://github.com/DavidMarsanic/securexe-launcher/releases/latest/download/secu
 
 macOS builds are not yet code-signed/notarized — see the Status section below.
 
+### Versioning
+
+SemVer (`MAJOR.MINOR.PATCH`), driven entirely by the git tag: pushing `v0.1.16`
+is what release.yml treats as version `0.1.16` — it stamps that number into
+`tauri.conf.json` and `Cargo.toml` at build time (see the "Stamp the release
+version" step), so the tag is the single source of truth, not either file's
+checked-in `0.1.0` placeholder. The running app compares itself against this
+same source: `src-tauri/src/self_update.rs` reads its own build-time version
+and checks it against GitHub's `/releases/latest` tag to decide whether to
+tell the user a newer release exists. That check silently no-ops on anything
+it can't parse as semver, so tags must stay in plain `vX.Y.Z` form — no
+`-beta`/`-rc` suffixes without also updating that comparison.
+
+### Verifying your download
+
+Every installer `release.yml` publishes is accompanied by two independent
+ways to check it wasn't corrupted or tampered with:
+
+- **Checksum** — a `.sha256` file next to each installer
+  (`securexe-launcher-macos-arm64.dmg.sha256`, etc.):
+
+  ```bash
+  shasum -a 256 -c securexe-launcher-macos-arm64.dmg.sha256   # macOS/Linux
+  ```
+
+- **Build attestation** — GitHub's signed provenance, tying the exact file
+  you downloaded to the exact commit and workflow run that produced it (the
+  same "verified" tier shown for every catalog app on the website):
+
+  ```bash
+  gh attestation verify securexe-launcher-macos-arm64.dmg --owner DavidMarsanic
+  ```
+
+This mirrors the standard every app built through Securexe is already held
+to — see `VerifyBadge`/`HashBubble` in securexe-web.
+
 ## Status
 
 v1 flow implemented and verified end-to-end against the live production orchestrator (`gohugoio/hugo`): protocol registration, manifest fetch, download, sha256 verification, cache-hit skip, and execution all work. Not yet packaged/signed for distribution.

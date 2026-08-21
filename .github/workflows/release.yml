@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -118,3 +120,38 @@ jobs:
           gh release upload "${{ github.ref_name }}" "${{ matrix.fixed_name }}" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Lets anyone verify a downloaded installer wasn't corrupted or
+      # tampered with in transit, matching the checksum every catalog app
+      # already publishes (see securexe-web's VerifyBadge/HashBubble). Pure
+      # python so this works identically across bash on macOS/Linux and Git
+      # Bash on Windows, same reasoning as the version-stamping step above.
+      - name: Write SHA256 checksum for the fixed-name artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import hashlib
+          path = '${{ matrix.fixed_name }}'
+          h = hashlib.sha256()
+          with open(path, 'rb') as f:
+              for chunk in iter(lambda: f.read(1 << 20), b''):
+                  h.update(chunk)
+          with open(path + '.sha256', 'w') as out:
+              out.write(f'{h.hexdigest()}  {path}\n')
+          "
+          cat "${{ matrix.fixed_name }}.sha256"
+          gh release upload "${{ github.ref_name }}" "${{ matrix.fixed_name }}.sha256" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Stronger than the checksum above: a signed, publicly-verifiable
+      # attestation tying this exact file to this exact workflow run and
+      # commit — GitHub's own build-provenance tier, the same "verified"
+      # bar (green check, not just a hash) that securexe-web's VerifyBadge
+      # shows for a "github-attestation" download. Free on GitHub-hosted
+      # runners; requires the id-token/attestations permissions above.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ matrix.fixed_name }}
