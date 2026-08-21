@@ -6,6 +6,7 @@ const installedGalleryEl = document.querySelector("#installed-gallery");
 const installedEmptyStateEl = document.querySelector("#installed-empty-state");
 const libraryGalleryEl = document.querySelector("#library-gallery");
 const libraryNoteEl = document.querySelector("#library-note");
+const librarySignInRowEl = document.querySelector("#library-signin-row");
 const librarySignInBtnEl = document.querySelector("#library-signin-btn");
 const browseViewEl = document.querySelector("#browse-view");
 const browseGalleryEl = document.querySelector("#browse-gallery");
@@ -518,10 +519,10 @@ function renderLibrary(entries) {
   // the note logic entirely.
   if (!linkedAccount) {
     libraryNoteEl.classList.add("hidden");
-    librarySignInBtnEl.classList.remove("hidden");
+    librarySignInRowEl.classList.remove("hidden");
     return;
   }
-  librarySignInBtnEl.classList.add("hidden");
+  librarySignInRowEl.classList.add("hidden");
 
   if (libraryError) {
     libraryNoteEl.textContent = "Couldn't load your account library right now.";
@@ -664,11 +665,13 @@ unlinkBtnEl.addEventListener("click", async () => {
 });
 
 // Linking itself can't be initiated in here (see the note above
-// renderAccount) — this just hands off to the website's dashboard, which
+// renderAccount) — this just hands off to the website's /link route, which
 // signs a `securexe://link` token from the visitor's session and fires it
-// straight back at this app.
+// straight back at this app. /link covers both cases in one click: already
+// signed in there gets the token immediately, signed out goes through
+// GitHub first and bounces right back to finish the same handoff.
 librarySignInBtnEl.addEventListener("click", () => {
-  invoke("open_url", { url: "https://brightencode.com/developers/dashboard" }).catch((e) => {
+  invoke("open_url", { url: "https://brightencode.com/link" }).catch((e) => {
     console.error("open_url failed", e);
   });
 });

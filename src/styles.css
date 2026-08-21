@@ -194,22 +194,26 @@ body {
   display: none;
 }
 
-.section-note-btn {
-  display: block;
+.library-signin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 12px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-size: 0.9em;
-  text-decoration: underline;
-  cursor: pointer;
-  text-align: left;
 }
 
-.section-note-btn.hidden {
+.library-signin-row.hidden {
   display: none;
+}
+
+.library-signin-row .section-note {
+  margin: 0;
+}
+
+.library-signin-row .unlink-btn {
+  color: var(--accent);
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .app-tile {
