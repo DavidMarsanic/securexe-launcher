@@ -12,6 +12,8 @@
   --banner-bg: #e8e8f5;
   --muted: rgba(15, 15, 15, 0.55);
   --accent: #3b6bf6;
+  --coral: #ff5a3c;
+  --coral-ink: #ffffff;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -54,14 +56,41 @@ body {
   display: none;
 }
 
-.unlink-btn {
-  border: none;
-  background: none;
-  color: inherit;
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
   font: inherit;
+  font-weight: 600;
+  font-size: 0.85em;
+  padding: 6px 14px;
   cursor: pointer;
-  text-decoration: underline;
-  padding: 0;
+  white-space: nowrap;
+  transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.btn-primary {
+  background: var(--coral);
+  color: var(--coral-ink);
+  padding: 8px 18px;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-ghost {
+  background: none;
+  border-color: var(--tile-border);
+  color: var(--muted);
+}
+
+.btn-ghost:hover {
+  border-color: var(--coral);
+  color: var(--coral);
 }
 
 .status-banner {
@@ -101,9 +130,14 @@ body {
   display: none;
 }
 
-.launcher-update-banner .unlink-btn {
+.launcher-update-banner .btn-ghost {
+  border-color: var(--accent, #3b6bf6);
   color: var(--accent, #3b6bf6);
-  font-weight: 600;
+}
+
+.launcher-update-banner .btn-ghost:hover {
+  background: var(--accent, #3b6bf6);
+  color: var(--coral-ink);
 }
 
 .tab-bar {
@@ -210,9 +244,7 @@ body {
   margin: 0;
 }
 
-.library-signin-row .unlink-btn {
-  color: var(--accent);
-  font-weight: 600;
+.library-signin-row .btn-primary {
   flex-shrink: 0;
 }
 
@@ -362,5 +394,7 @@ body {
     --banner-bg: #3a3a4a;
     --muted: rgba(246, 246, 246, 0.6);
     --accent: #6b8dfa;
+    --coral: #ff7a5c;
+    --coral-ink: #181733;
   }
 }
