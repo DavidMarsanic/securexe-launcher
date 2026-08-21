@@ -194,6 +194,24 @@ body {
   display: none;
 }
 
+.section-note-btn {
+  display: block;
+  margin: 0 0 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.9em;
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+}
+
+.section-note-btn.hidden {
+  display: none;
+}
+
 .app-tile {
   position: relative;
   display: flex;

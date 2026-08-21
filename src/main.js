@@ -6,6 +6,7 @@ const installedGalleryEl = document.querySelector("#installed-gallery");
 const installedEmptyStateEl = document.querySelector("#installed-empty-state");
 const libraryGalleryEl = document.querySelector("#library-gallery");
 const libraryNoteEl = document.querySelector("#library-note");
+const librarySignInBtnEl = document.querySelector("#library-signin-btn");
 const browseViewEl = document.querySelector("#browse-view");
 const browseGalleryEl = document.querySelector("#browse-gallery");
 const browseEmptyStateEl = document.querySelector("#browse-empty-state");
@@ -61,6 +62,12 @@ let installedEntries = [];
 let libraryEntries = [];
 let libraryError = null;
 let browseEntries = [];
+
+// Set by renderAccount below — `renderLibrary` reads this to tell "you're
+// signed in with nothing else to show" apart from "you're not signed in at
+// all," which `list_account_library` can't distinguish on its own (it
+// returns an empty list either way, see lib.rs).
+let linkedAccount = null;
 
 function matchesQuery(repo) {
   if (!searchQuery) return true;
@@ -503,6 +510,19 @@ function renderInstalled(entries) {
 function renderLibrary(entries) {
   libraryGalleryEl.innerHTML = "";
 
+  // Not signed in: `list_account_library` returns an empty list rather than
+  // an error in this case (see lib.rs), so without this check every
+  // unlinked user would see "Nothing else — everything in your library is
+  // already installed here," which is a lie — there's no library to check
+  // against at all. Show the sign-in prompt instead and skip the rest of
+  // the note logic entirely.
+  if (!linkedAccount) {
+    libraryNoteEl.classList.add("hidden");
+    librarySignInBtnEl.classList.remove("hidden");
+    return;
+  }
+  librarySignInBtnEl.classList.add("hidden");
+
   if (libraryError) {
     libraryNoteEl.textContent = "Couldn't load your account library right now.";
     libraryNoteEl.classList.remove("hidden");
@@ -603,14 +623,25 @@ async function refreshGallery() {
   refreshAccountLibrary();
 }
 
-// Linking only ever happens by receiving a `securexe://link` deep link from
-// the website — there's nothing to click in here to initiate it, only to
-// undo it, so this bar is purely a status readout plus an unlink escape
-// hatch.
+// Linking only ever completes by receiving a `securexe://link` deep link
+// from the website — there's no way to mint that token in here, since it
+// has to be signed server-side against a real session (see signing.ts in
+// securexe-web). This bar is a status readout plus an unlink escape hatch;
+// the actual sign-in entry point lives in the library section's sign-in
+// button below, which just opens the browser to where that token gets minted.
 function renderAccount(account) {
+  linkedAccount = account;
   accountBarEl.classList.toggle("hidden", !account);
   if (account) {
     accountLabelEl.textContent = `Linked as ${account.github_username}`;
+  }
+  // refreshGallery and refreshAccount race at startup (see the bottom of
+  // this file), so whichever of them lands last needs to re-render the
+  // library section against the other's already-settled state — otherwise
+  // a linked account that resolves after the (empty, pre-link) library
+  // fetch would get stuck showing the sign-in prompt.
+  if (activeTab === "my-apps") {
+    renderLibrary(libraryEntries.filter((e) => matchesQuery(e.repo)));
   }
 }
 
@@ -632,6 +663,16 @@ unlinkBtnEl.addEventListener("click", async () => {
   }
 });
 
+// Linking itself can't be initiated in here (see the note above
+// renderAccount) — this just hands off to the website's dashboard, which
+// signs a `securexe://link` token from the visitor's session and fires it
+// straight back at this app.
+librarySignInBtnEl.addEventListener("click", () => {
+  invoke("open_url", { url: "https://brightencode.com/developers/dashboard" }).catch((e) => {
+    console.error("open_url failed", e);
+  });
+});
+
 listen("launcher-status", (event) => {
   const payload = event.payload;
   bannerEl.classList.remove("hidden");
@@ -646,6 +687,7 @@ listen("launcher-status", (event) => {
     bannerRepoEl.textContent = "";
     bannerTextEl.textContent = `Linked as ${payload.user}`;
     refreshAccount();
+    refreshAccountLibrary();
     setTimeout(() => bannerEl.classList.add("hidden"), 2000);
     return;
   }
