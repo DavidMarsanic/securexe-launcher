@@ -665,13 +665,14 @@ unlinkBtnEl.addEventListener("click", async () => {
 });
 
 // Linking itself can't be initiated in here (see the note above
-// renderAccount) — this just hands off to the website's /link route, which
-// signs a `securexe://link` token from the visitor's session and fires it
-// straight back at this app. /link covers both cases in one click: already
-// signed in there gets the token immediately, signed out goes through
-// GitHub first and bounces right back to finish the same handoff.
+// renderAccount) — this just hands off to the website's /launcherlink
+// route, which signs a `securexe://link` token from the visitor's session
+// and fires it straight back at this app. /launcherlink covers both cases
+// in one click: already signed in there gets the token immediately, signed
+// out goes through GitHub first and bounces right back to finish the same
+// handoff.
 librarySignInBtnEl.addEventListener("click", () => {
-  invoke("open_url", { url: "https://brightencode.com/link" }).catch((e) => {
+  invoke("open_url", { url: "https://www.brightencode.com/launcherlink" }).catch((e) => {
     console.error("open_url failed", e);
   });
 });
