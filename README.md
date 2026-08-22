@@ -1,6 +1,6 @@
 <img src=".github/assets/logo.svg" width="72" height="72" alt="Brightencode logo">
 
-# securexe-launcher
+# brightencode-launcher
 
 A small, cross-platform desktop helper — the "install + launch" half of the Securexe platform. It does not browse, build, or manage a catalog; that lives on the website. Its job is narrow: register the `securexe://` URL protocol, and when invoked, download the right binary from the orchestrator at `worker.brightencode.com` and run it.
 
@@ -50,7 +50,7 @@ Push a tag (`git tag v0.1.0 && git push origin v0.1.0`) or run the "Release" wor
 The release stays a draft — nothing is publicly downloadable — until you manually click "Publish" on it. Once published, link to installers with the stable, version-agnostic URL pattern so the website link never needs updating:
 
 ```
-https://github.com/DavidMarsanic/securexe-launcher/releases/latest/download/securexe-launcher-macos-arm64.dmg
+https://github.com/DavidMarsanic/brightencode-launcher/releases/latest/download/securexe-launcher-macos-arm64.dmg
 ```
 
 macOS builds are not yet code-signed/notarized — see the Status section below.
@@ -89,7 +89,7 @@ ways to check it wasn't corrupted or tampered with:
   ```
 
 This mirrors the standard every app built through Securexe is already held
-to — see `VerifyBadge`/`HashBubble` in securexe-web.
+to — see `VerifyBadge`/`HashBubble` in brightencode-web.
 
 ## Status
 

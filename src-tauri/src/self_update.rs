@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::LauncherError;
 
 const RELEASES_LATEST_URL: &str =
-    "https://api.github.com/repos/DavidMarsanic/securexe-launcher/releases/latest";
+    "https://api.github.com/repos/DavidMarsanic/brightencode-launcher/releases/latest";
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -83,7 +83,7 @@ fn download_url_for_this_platform() -> Result<String, LauncherError> {
         }
     };
     Ok(format!(
-        "https://github.com/DavidMarsanic/securexe-launcher/releases/latest/download/{file}"
+        "https://github.com/DavidMarsanic/brightencode-launcher/releases/latest/download/{file}"
     ))
 }
 
@@ -196,7 +196,7 @@ mod tests {
         );
         let update = behind.unwrap();
         assert!(update.download_url.starts_with(
-            "https://github.com/DavidMarsanic/securexe-launcher/releases/latest/download/"
+            "https://github.com/DavidMarsanic/brightencode-launcher/releases/latest/download/"
         ));
 
         let ahead = check("999.0.0").await.expect("check failed");

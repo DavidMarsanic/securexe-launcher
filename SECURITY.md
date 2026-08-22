@@ -1,6 +1,6 @@
 # Security Policy
 
-securexe-launcher is a trust-sensitive component: it registers the
+brightencode-launcher is a trust-sensitive component: it registers the
 `securexe://` protocol, verifies Ed25519-signed launch links, and downloads
 and runs binaries on the user's machine. Please report vulnerabilities
 privately rather than as a public issue.
@@ -25,7 +25,7 @@ download/checksum verification (`src-tauri/src/verify.rs`), and anything that
 could let a malicious webpage or a compromised download get code running
 without the checks described in the [README](README.md#link-signing).
 
-Out of scope: the securexe-web site and the build orchestrator — those live
+Out of scope: the brightencode-web site and the build orchestrator — those live
 in separate, private repos; please report issues with them directly to
 marsanic.david@gmail.com as well.
 
